@@ -13,16 +13,22 @@ class ResourceController:
         self.deactivation_count = 0
 
     @property
+    def is_window_full(self):
+        return len(self.window) == self.window_size
+
+    @property
     def destroyed_fraction(self):
         if not self.window:
             return 0.0
         return self.destroyed_in_window / len(self.window)
 
     def on_packet_exit(self, packet):
-        if len(self.window) == self.window_size:
+        if self.is_window_full:
             self.destroyed_in_window -= self.window[0]
         self.window.append(1 if packet.destroyed else 0)
         self.destroyed_in_window += 1 if packet.destroyed else 0
+        if not self.is_window_full:
+            return
         fraction = self.destroyed_fraction
         if not self.resource_state.accelerated and fraction >= self.activation_threshold:
             self.resource_state.accelerated = True

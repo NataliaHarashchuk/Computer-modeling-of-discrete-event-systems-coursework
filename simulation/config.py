@@ -40,10 +40,10 @@ class ModelConfig:
             raise ValueError("mean times must be positive")
         if self.window_size < 1:
             raise ValueError("window_size must be at least 1")
-        if not 0.0 <= self.activation_threshold <= 1.0:
-            raise ValueError("activation_threshold must be within [0, 1]")
-        if not 0.0 <= self.effective_deactivation_threshold <= 1.0:
-            raise ValueError("deactivation_threshold must be within [0, 1]")
+        if self.activation_threshold < 0.0:
+            raise ValueError("activation_threshold must be non-negative")
+        if self.effective_deactivation_threshold < 0.0:
+            raise ValueError("deactivation_threshold must be non-negative")
         if self.effective_deactivation_threshold > self.activation_threshold:
             raise ValueError("deactivation_threshold must not exceed activation_threshold")
         if self.trace_interval is not None and self.trace_interval <= 0:
