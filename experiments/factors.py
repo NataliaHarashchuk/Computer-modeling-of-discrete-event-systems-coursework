@@ -14,6 +14,7 @@ from experiments.common import (
 from experiments.plotting import (
     add_horizontal_reference,
     add_legend,
+    add_vertical_reference,
     create_figure,
     label_axes,
     plot_line,
@@ -29,6 +30,10 @@ MIN_ADJUSTED_R_SQUARED_GAIN = 0.01
 SIGNIFICANCE_LEVEL = 0.05
 
 INTERVAL_CENTERS = [5.0 + 0.5 * step for step in range(11)]
+REGRESSION_UPPER_BOUND_MS = 8.0
+PLATEAU_LOWER_BOUND_MS = 8.0
+REGRESSION_CENTERS = [center for center in INTERVAL_CENTERS if center <= REGRESSION_UPPER_BOUND_MS]
+PLATEAU_CENTERS = [center for center in INTERVAL_CENTERS if center >= PLATEAU_LOWER_BOUND_MS]
 WINDOW_SIZES = [10, 20, 50, 100, 150, 200, 300, 500]
 THRESHOLDS = [round(0.10 + 0.05 * step, 2) for step in range(9)]
 
@@ -109,11 +114,12 @@ def fit_polynomial(x_values, y_values, degree):
 
 
 def choose_degree(fits):
-    for current, following in zip(fits, fits[1:]):
-        gain = following["adjusted_r_squared"] - current["adjusted_r_squared"]
-        if current["p_value"] < SIGNIFICANCE_LEVEL and gain < MIN_ADJUSTED_R_SQUARED_GAIN:
-            return current
-    return fits[-1]
+    significant_fits = [fit for fit in fits if fit["p_value"] < SIGNIFICANCE_LEVEL] or fits
+    best_adjusted_r_squared = max(fit["adjusted_r_squared"] for fit in significant_fits)
+    for fit in significant_fits:
+        if best_adjusted_r_squared - fit["adjusted_r_squared"] < MIN_ADJUSTED_R_SQUARED_GAIN:
+            return fit
+    return significant_fits[-1]
 
 
 def format_equation(coefficients):
@@ -163,42 +169,90 @@ def apply_fraction_axis(axis, key):
         use_percent_axis(axis, decimals=0)
 
 
+def values_at_centers(centers, values, selected_centers):
+    value_by_center = dict(zip(centers, values))
+    return [value_by_center[center] for center in selected_centers]
+
+
+def describe_plateau(summaries):
+    plateau = {}
+    for key in RESPONSE_KEYS:
+        means, halves = means_and_halves(summaries, key)
+        plateau_means = values_at_centers(INTERVAL_CENTERS, means, PLATEAU_CENTERS)
+        plateau_halves = values_at_centers(INTERVAL_CENTERS, halves, PLATEAU_CENTERS)
+        level = float(np.mean(plateau_means))
+        plateau[key] = {
+            "level": level,
+            "max_deviation": float(max(abs(mean - level) for mean in plateau_means)),
+            "max_upper_bound": float(max(mean + half for mean, half in zip(plateau_means, plateau_halves))),
+        }
+    return plateau
+
+
+def write_interval_plateau(plateau):
+    write_csv(
+        "factor_interval_plateau.csv",
+        ["response", "from_ms", "to_ms", "levels", "plateau_level", "max_deviation_from_level",
+         "max_upper_confidence_bound"],
+        [
+            [key, PLATEAU_CENTERS[0], PLATEAU_CENTERS[-1], len(PLATEAU_CENTERS),
+             item["level"], item["max_deviation"], item["max_upper_bound"]]
+            for key, item in plateau.items()
+        ],
+    )
+
+
 def write_interval_regression(summaries, regression_caption):
     regression_rows = []
     chosen_fits = {}
     for key in RESPONSE_KEYS:
         means, _ = means_and_halves(summaries, key)
-        fits = [fit_polynomial(INTERVAL_CENTERS, means, degree) for degree in range(1, MAX_POLYNOMIAL_DEGREE + 1)]
+        regression_means = values_at_centers(INTERVAL_CENTERS, means, REGRESSION_CENTERS)
+        fits = [
+            fit_polynomial(REGRESSION_CENTERS, regression_means, degree)
+            for degree in range(1, MAX_POLYNOMIAL_DEGREE + 1)
+        ]
         chosen = choose_degree(fits)
         chosen_fits[key] = (means, chosen)
         for fit in fits:
             regression_rows.append([
-                key, fit["degree"], int(fit is chosen),
+                key, REGRESSION_CENTERS[0], REGRESSION_CENTERS[-1], len(REGRESSION_CENTERS),
+                fit["degree"], int(fit is chosen),
                 *padded_coefficients(fit["coefficients"]),
                 fit["correlation_index"], fit["adjusted_r_squared"], fit["f_statistic"], fit["p_value"],
             ])
     write_csv(
         "factor_interval_regression.csv",
-        ["response", "degree", "chosen", "coef_x0", "coef_x1", "coef_x2", "coef_x3",
+        ["response", "from_ms", "to_ms", "points", "degree", "chosen", "coef_x0", "coef_x1", "coef_x2", "coef_x3",
          "correlation_index_R", "adjusted_R2", "F", "p_value"],
         regression_rows,
     )
+    plateau = describe_plateau(summaries)
+    write_interval_plateau(plateau)
 
     figure, axes = create_figure(regression_caption, rows=2, columns=2, width=11.0, height=8.5)
-    dense_x = np.linspace(INTERVAL_CENTERS[0], INTERVAL_CENTERS[-1], 200)
+    regression_x = np.linspace(REGRESSION_CENTERS[0], REGRESSION_CENTERS[-1], 200)
+    plateau_x = [PLATEAU_CENTERS[0], PLATEAU_CENTERS[-1]]
     for axis, key in zip(axes, RESPONSE_KEYS):
         means, chosen = chosen_fits[key]
         plot_line(axis, INTERVAL_CENTERS, means, "Середнє за прогонами", 0, markers=True, linewidth=0.0)
         equation = format_equation(chosen["coefficients"])
-        label = f"Поліном ст. {chosen['degree']}, R = {chosen['correlation_index']:.4f}\ny = {equation}"
-        plot_line(axis, dense_x, np.polyval(chosen["coefficients"], dense_x), label, 1, markers=False)
+        label = (
+            f"Поліном ст. {chosen['degree']} на {REGRESSION_CENTERS[0]:g}–{REGRESSION_CENTERS[-1]:g} мс, "
+            f"R = {chosen['correlation_index']:.4f}\ny = {equation}"
+        )
+        plot_line(axis, regression_x, np.polyval(chosen["coefficients"], regression_x), label, 1, markers=False)
+        plateau_level = plateau[key]["level"]
+        plateau_label = f"Плато ≥ {PLATEAU_LOWER_BOUND_MS:g} мс: y = {plateau_level:.4g}"
+        plot_line(axis, plateau_x, [plateau_level, plateau_level], plateau_label, 2, markers=False)
+        add_vertical_reference(axis, PLATEAU_LOWER_BOUND_MS, "Межа ділянок")
         label_axes(axis, RESPONSE_LABELS[key], "Середній інтервал надходження, мс", RESPONSE_AXIS_LABELS[key])
         apply_fraction_axis(axis, key)
-        axis.legend(loc="best", fontsize=7.5)
+        axis.legend(loc="upper right", fontsize=7.5)
     figure.tight_layout()
     save_figure(figure, "factor_interval_regression.png")
 
-    return chosen_fits
+    return chosen_fits, plateau
 
 
 def run_interval_factor(params, replications):
@@ -224,14 +278,16 @@ def run_interval_factor(params, replications):
 
     regression_caption = simulation_caption(
         params["simulation_time_ms"], params["warmup_time_ms"], replications,
-        "розкид інтервалу ±3 мс, точки — середні за прогонами",
+        f"розкид інтервалу ±3 мс, точки — середні за прогонами, регресія на "
+        f"{REGRESSION_CENTERS[0]:g}–{REGRESSION_CENTERS[-1]:g} мс, плато ≥ {PLATEAU_LOWER_BOUND_MS:g} мс окремо",
     )
-    chosen_fits = write_interval_regression(summaries, regression_caption)
+    chosen_fits, plateau = write_interval_regression(summaries, regression_caption)
 
     report = {}
     for key in RESPONSE_KEYS:
         means, chosen = chosen_fits[key]
         report[key] = {
+            "plateau": plateau[key],
             "degree": chosen["degree"],
             "R": chosen["correlation_index"],
             "adjusted_R2": chosen["adjusted_r_squared"],
@@ -301,7 +357,8 @@ def print_interval_report(report):
             f"{key}: degree={item['degree']} R={item['R']:.4f} adjR2={item['adjusted_R2']:.4f} "
             f"F={item['F']:.2f} p={item['p']:.3g} first={item['first']:.4f} last={item['last']:.4f} "
             f"max@{shape['argmax_x']}={shape['max_y']:.4f} min@{shape['argmin_x']}={shape['min_y']:.4f} "
-            f"inc={shape['monotonic_increasing']} dec={shape['monotonic_decreasing']}"
+            f"inc={shape['monotonic_increasing']} dec={shape['monotonic_decreasing']} "
+            f"plateau={item['plateau']['level']:.4g} plateau_upper={item['plateau']['max_upper_bound']:.4g}"
         )
 
 

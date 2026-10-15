@@ -1,0 +1,5 @@
+﻿response,from_ms,to_ms,levels,plateau_level,max_deviation_from_level,max_upper_confidence_bound
+destroyed_fraction,8.0,10.0,5,0.0,0.0,0.0
+destroyed_per_second,8.0,10.0,5,0.0,0.0,0.0
+activations_per_second,8.0,10.0,5,0.0,0.0,0.0
+accelerated_time_fraction,8.0,10.0,5,0.0,0.0,0.0
