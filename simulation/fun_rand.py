@@ -17,5 +17,8 @@ class FunRand:
     def uniform(self, minimum, maximum):
         return minimum + (maximum - minimum) * self.standard_uniform()
 
+    def normal(self, mean, deviation):
+        return mean + deviation * float(self.generator.standard_normal())
+
     def constant(self, value):
         return float(value)

@@ -21,6 +21,7 @@ class Packet:
     arrival_time: float
     exit_time: float | None = None
     destroyed: bool | None = None
+    discarded: bool = False
     node_records: list[NodeRecord] = field(default_factory=list)
 
     @property

@@ -23,7 +23,7 @@ from experiments.plotting import (
     use_thousands_separator,
 )
 from simulation.config import ModelConfig
-from simulation.model import MILLISECONDS_PER_SECOND
+from simulation.transmission_model import MILLISECONDS_PER_SECOND
 
 PILOT_RUNS = 8
 HORIZON_MS = 2_000_000.0
@@ -37,6 +37,12 @@ WARMUP_PLOT_HORIZON_FACTOR = 4.0
 WARMUP_ROUNDING_MS = 5_000.0
 SIMULATION_TIME_ROUNDING_MS = 100_000.0
 SEED_OFFSET = 500
+HIGH_LOAD_ARRIVAL_CENTER_MS = 5.0
+SCENARIOS = (
+    ("base", "Базовий B8, інтервал unif(3; 9) мс", ModelConfig()),
+    ("high_load", f"Найбільше навантаження, інтервал unif({HIGH_LOAD_ARRIVAL_CENTER_MS - 3:g}; "
+                  f"{HIGH_LOAD_ARRIVAL_CENTER_MS + 3:g}) мс", ModelConfig().with_arrival_center(HIGH_LOAD_ARRIVAL_CENTER_MS)),
+)
 
 RESPONSES = (
     ("destroyed_fraction", "Частка знищених пакетів P_зн", "Частка знищених P_зн"),
@@ -47,14 +53,15 @@ RESPONSES = (
 
 def cumulative_response(trace, key):
     times = np.array([snapshot["time"] for snapshot in trace])
+    observed = np.array([snapshot["observed_time"] for snapshot in trace])
     if key == "destroyed_fraction":
         values = np.array([snapshot["destroyed_fraction"] for snapshot in trace])
     elif key == "activations_per_second":
         counts = np.array([snapshot["activation_count"] for snapshot in trace], dtype=float)
-        values = np.divide(counts * MILLISECONDS_PER_SECOND, times, out=np.zeros_like(counts), where=times > 0)
+        values = np.divide(counts * MILLISECONDS_PER_SECOND, observed, out=np.zeros_like(counts), where=observed > 0)
     else:
         accelerated = np.array([snapshot["accelerated_time"] for snapshot in trace])
-        values = np.divide(accelerated, times, out=np.zeros_like(accelerated), where=times > 0)
+        values = np.divide(accelerated, observed, out=np.zeros_like(accelerated), where=observed > 0)
     return times, values
 
 
@@ -202,34 +209,45 @@ def plot_warmup(analyses, warmup_time, caption):
     return save_figure(figure, "transient_warmup.png")
 
 
-def main():
-    started = time.time()
-    base_config = ModelConfig(warmup_time=0.0, simulation_time=HORIZON_MS, trace_interval=TRACE_INTERVAL_MS)
-    outputs = parallel_map(simulate_with_trace, replicate_configs(base_config, PILOT_RUNS, SEED_OFFSET))
-    traces = [trace for _, trace in outputs]
-    analyses = {key: analyse_response(traces, key) for key, _, _ in RESPONSES}
+def pilot_config(scenario_config):
+    return scenario_config.with_overrides(warmup_time=0.0, simulation_time=HORIZON_MS, trace_interval=TRACE_INTERVAL_MS)
 
+
+def analyse_scenarios():
+    configs = [config for _, _, scenario_config in SCENARIOS
+               for config in replicate_configs(pilot_config(scenario_config), PILOT_RUNS, SEED_OFFSET)]
+    traces = [trace for _, trace in parallel_map(simulate_with_trace, configs)]
+    analyses_by_scenario = {}
+    for index, (scenario_key, _, _) in enumerate(SCENARIOS):
+        scenario_traces = traces[index * PILOT_RUNS:(index + 1) * PILOT_RUNS]
+        analyses_by_scenario[scenario_key] = {key: analyse_response(scenario_traces, key) for key, _, _ in RESPONSES}
+    return analyses_by_scenario
+
+
+def scenario_limits(analyses):
     criterion_time = max(analysis["criterion_time"] for analysis in analyses.values())
     detected_warmup = max(analysis["warmup_time"] for analysis in analyses.values())
+    return criterion_time, detected_warmup
+
+
+def main():
+    started = time.time()
+    analyses_by_scenario = analyse_scenarios()
+    analyses = analyses_by_scenario["base"]
+    limits = {scenario_key: scenario_limits(analyses_by_scenario[scenario_key]) for scenario_key, _, _ in SCENARIOS}
+    criterion_time = max(criterion for criterion, _ in limits.values())
+    detected_warmup = max(warmup for _, warmup in limits.values())
     warmup_time = round_up(max(detected_warmup, TRACE_INTERVAL_MS) * WARMUP_SAFETY_FACTOR, WARMUP_ROUNDING_MS)
     simulation_time = round_up(criterion_time, SIMULATION_TIME_ROUNDING_MS)
 
     rows = []
-    for key, title, _ in RESPONSES:
-        analysis = analyses[key]
-        rows.append([
-            title,
-            f"{analysis['steady_level']:.5f}",
-            f"{analysis['precision']:.5f}",
-            f"{analysis['criterion_time']:.0f}",
-            analysis["half_window"],
-            f"{analysis['tail_max_deviation']:.5f}",
-            f"{analysis['warmup_time']:.0f}",
-            f"{analysis['spread'][-1]:.5f}",
-        ])
+    for scenario_key, scenario_title, _ in SCENARIOS:
+        for key, title, _ in RESPONSES:
+            analysis = analyses_by_scenario[scenario_key][key]
+            rows.append([scenario_title] + response_row(title, analysis))
     write_csv(
         "transient.csv",
-        ["Відгук", "Сталий рівень", "Точність ε (5% рівня)", "T за критерієм (3.1), мс",
+        ["Сценарій", "Відгук", "Сталий рівень", "Точність ε (5% рівня)", "T за критерієм (3.1), мс",
          f"Півширина вікна Велча w, інтервалів по {TRACE_INTERVAL_MS:.0f} мс",
          "Макс. відхилення згладженого ряду на другій половині горизонту",
          "Кінець перехідного періоду (відхилення ≤ ε), мс", f"Розкид при t = {HORIZON_MS:.0f} мс"],
@@ -255,26 +273,50 @@ def main():
             "detected_warmup_ms": detected_warmup,
             "warmup_safety_factor": WARMUP_SAFETY_FACTOR,
             "criterion_time_ms": criterion_time,
-            "responses": {
-                key: {
-                    "steady_level": analyses[key]["steady_level"],
-                    "precision": analyses[key]["precision"],
-                    "criterion_time_ms": analyses[key]["criterion_time"],
-                    "welch_half_window": analyses[key]["half_window"],
-                    "tail_max_deviation": analyses[key]["tail_max_deviation"],
-                    "warmup_time_ms": analyses[key]["warmup_time"],
+            "scenarios": {
+                scenario_key: {
+                    "title": scenario_title,
+                    "criterion_time_ms": limits[scenario_key][0],
+                    "detected_warmup_ms": limits[scenario_key][1],
+                    "responses": {
+                        key: {
+                            "steady_level": analyses_by_scenario[scenario_key][key]["steady_level"],
+                            "precision": analyses_by_scenario[scenario_key][key]["precision"],
+                            "criterion_time_ms": analyses_by_scenario[scenario_key][key]["criterion_time"],
+                            "welch_half_window": analyses_by_scenario[scenario_key][key]["half_window"],
+                            "tail_max_deviation": analyses_by_scenario[scenario_key][key]["tail_max_deviation"],
+                            "warmup_time_ms": analyses_by_scenario[scenario_key][key]["warmup_time"],
+                        }
+                        for key, _, _ in RESPONSES
+                    },
                 }
-                for key, _, _ in RESPONSES
+                for scenario_key, scenario_title, _ in SCENARIOS
             },
         },
     })
 
-    print(f"Пробні прогони: {PILOT_RUNS} × {HORIZON_MS:.0f} мс, крок трасування {TRACE_INTERVAL_MS:.0f} мс")
+    print(f"Пробні прогони: {PILOT_RUNS} × {HORIZON_MS:.0f} мс на сценарій, крок трасування {TRACE_INTERVAL_MS:.0f} мс")
     for row in rows:
         print("  " + " | ".join(str(value) for value in row))
+    for scenario_key, scenario_title, _ in SCENARIOS:
+        print(f"{scenario_title}: T за (3.1) = {limits[scenario_key][0]:.0f} мс, "
+              f"перехідний період = {limits[scenario_key][1]:.0f} мс")
     print(f"Перехідний період (виявлено): {detected_warmup:.0f} мс → T_warm = {warmup_time:.0f} мс")
     print(f"Критерій (3.1): T = {criterion_time:.0f} мс → T_mod = {simulation_time:.0f} мс")
     print(f"Час виконання: {time.time() - started:.1f} с")
+
+
+def response_row(title, analysis):
+    return [
+        title,
+        f"{analysis['steady_level']:.5f}",
+        f"{analysis['precision']:.5f}",
+        f"{analysis['criterion_time']:.0f}",
+        analysis["half_window"],
+        f"{analysis['tail_max_deviation']:.5f}",
+        f"{analysis['warmup_time']:.0f}",
+        f"{analysis['spread'][-1]:.5f}",
+    ]
 
 
 if __name__ == "__main__":

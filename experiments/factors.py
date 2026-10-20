@@ -27,7 +27,6 @@ from experiments.plotting import (
 
 REQUIREMENT_DESTROYED_FRACTION = 0.30
 MAX_POLYNOMIAL_DEGREE = 4
-MIN_ADJUSTED_R_SQUARED_GAIN = 0.01
 SIGNIFICANCE_LEVEL = 0.05
 MIN_CORRELATION_INDEX = 0.7
 ACTIVE_RESPONSE_SHARE = 0.01
@@ -109,6 +108,16 @@ def normalize(values, center, half_range):
     return (np.asarray(values, dtype=float) - center) / half_range
 
 
+def leave_one_out_error(normalized_x, y_values, degree):
+    point_indices = np.arange(len(y_values))
+    errors = []
+    for left_out in point_indices:
+        kept = point_indices != left_out
+        coefficients = np.polyfit(normalized_x[kept], y_values[kept], degree)
+        errors.append(y_values[left_out] - np.polyval(coefficients, normalized_x[left_out]))
+    return float(np.sqrt(np.mean(np.square(errors))))
+
+
 def fit_polynomial(normalized_x, y_values, degree):
     y_values = np.asarray(y_values, dtype=float)
     coefficients = np.polyfit(normalized_x, y_values, degree)
@@ -135,6 +144,7 @@ def fit_polynomial(normalized_x, y_values, degree):
         "adjusted_r_squared": adjusted_r_squared,
         "f_statistic": float(f_statistic),
         "p_value": p_value,
+        "leave_one_out_error": leave_one_out_error(normalized_x, y_values, degree),
         "non_negative": bool(np.polyval(coefficients, grid).min() >= negative_floor),
     }
 
@@ -142,11 +152,7 @@ def fit_polynomial(normalized_x, y_values, degree):
 def choose_degree(fits):
     admissible = [fit for fit in fits if fit["p_value"] < SIGNIFICANCE_LEVEL and fit["non_negative"]]
     candidates = admissible or [fit for fit in fits if fit["non_negative"]] or fits
-    best_adjusted_r_squared = max(fit["adjusted_r_squared"] for fit in candidates)
-    for fit in candidates:
-        if best_adjusted_r_squared - fit["adjusted_r_squared"] < MIN_ADJUSTED_R_SQUARED_GAIN:
-            return fit
-    return candidates[-1]
+    return min(candidates, key=lambda fit: fit["leave_one_out_error"])
 
 
 def format_equation(coefficients, variable="x"):
@@ -220,7 +226,7 @@ def write_interval_regression(summaries, regression_caption):
                 fit["degree"], "так" if fit is analysis["chosen"] else "ні",
                 *padded_coefficients(fit["coefficients"]),
                 fit["correlation_index"], fit["adjusted_r_squared"], fit["f_statistic"], fit["p_value"],
-                "так" if fit["non_negative"] else "ні",
+                fit["leave_one_out_error"], "так" if fit["non_negative"] else "ні",
                 "так" if fit["correlation_index"] >= MIN_CORRELATION_INDEX else "ні",
             ])
         if analysis["plateau_levels"]:
@@ -233,7 +239,7 @@ def write_interval_regression(summaries, regression_caption):
         ["Відгук", "Ділянка регресії від, мс", "Ділянка регресії до, мс", "Точок",
          "c0 (центр ділянки), мс", "Δ (піврозмах ділянки), мс", "Степінь полінома", "Обрано",
          "b0", "b1", "b2", "b3", "b4", "Індекс кореляції R", "Скоригований R²", "F", "p-value",
-         "Невід'ємний на ділянці", "R ≥ 0.7"],
+         "Похибка перехресної перевірки (leave-one-out RMSE)", "Невід'ємний на ділянці", "R ≥ 0.7"],
         regression_rows,
     )
     write_csv(
@@ -363,7 +369,8 @@ def print_interval_report(analyses):
         print(
             f"{key}: ділянка {analysis['region_levels'][0]:g}–{analysis['region_levels'][-1]:g} мс, "
             f"степінь {chosen['degree']}, R = {chosen['correlation_index']:.4f}, "
-            f"adjR2 = {chosen['adjusted_r_squared']:.4f}, F = {chosen['f_statistic']:.2f}, p = {chosen['p_value']:.3g}, "
+            f"adjR2 = {chosen['adjusted_r_squared']:.4f}, LOO RMSE = {chosen['leave_one_out_error']:.4g}, "
+            f"F = {chosen['f_statistic']:.2f}, p = {chosen['p_value']:.3g}, "
             f"невід'ємний: {chosen['non_negative']}, y = {format_equation(chosen['coefficients'])}, "
             f"плато = {analysis['plateau_level']:.4g}"
         )

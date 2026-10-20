@@ -7,13 +7,16 @@ from simulation.element import Element
 class Process(Element):
     event_label = "кінець обслуговування"
 
-    def __init__(self, name, event_priority, resource_state, service_time_generator):
-        super().__init__(name, event_priority)
+    def __init__(self, name, event_priority, rand, distribution, delay_mean, accelerated_delay_mean, resource_state,
+                 early_discard=None):
+        super().__init__(name, event_priority, rand, distribution, delay_mean)
+        self.accelerated_delay_mean = accelerated_delay_mean
         self.resource_state = resource_state
-        self.service_time_generator = service_time_generator
+        self.early_discard = early_discard
         self.queue = deque()
         self.current_packet = None
         self.started_services_count = 0
+        self.discarded_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = 0
@@ -43,6 +46,15 @@ class Process(Element):
             return 0.0
         return self.waiting_time_sum / self.started_services_count
 
+    def current_minimum_service_time(self):
+        if self.distribution != "constant":
+            return 0.0
+        return self.accelerated_delay_mean if self.resource_state.accelerated else self.delay_mean
+
+    def get_delay(self):
+        mean = self.accelerated_delay_mean if self.resource_state.accelerated else self.delay_mean
+        return self.delay_with_mean(mean)
+
     def in_act(self, packet):
         packet.open_node_record(self.name, self.current_time)
         if self.is_busy:
@@ -56,13 +68,17 @@ class Process(Element):
         self.current_packet = None
         self.next_time = math.inf
         self.next_element.in_act(finished_packet)
-        if self.queue:
+        while self.queue and not self.is_busy:
             self.start_service(self.queue.popleft())
         return finished_packet
 
     def start_service(self, packet):
         accelerated = self.resource_state.accelerated
-        duration = self.service_time_generator(accelerated)
+        duration = self.get_delay()
+        if self.early_discard is not None and self.early_discard.is_doomed(packet, self.current_time, duration):
+            self.discarded_count += 1
+            self.early_discard.discard(packet)
+            return
         record = packet.node_record(self.name)
         record.service_start_time = self.current_time
         self.waiting_time_sum += record.waiting_time
@@ -78,6 +94,7 @@ class Process(Element):
 
     def reset_statistics(self):
         self.started_services_count = 0
+        self.discarded_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = self.queue_length

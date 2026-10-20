@@ -6,7 +6,7 @@ import numpy as np
 
 from experiments.common import parallel_map, results_path, write_csv, write_text
 from simulation.config import ModelConfig
-from simulation.model import MILLISECONDS_PER_SECOND, Model
+from simulation.transmission_model import MILLISECONDS_PER_SECOND, TransmissionModel
 
 TABLE_FILE = "verification.csv"
 PROTOCOL_FILE = "event_protocol.txt"
@@ -74,6 +74,8 @@ OUTPUT_KEYS = [
     "throughput_per_second",
     "generated",
     "exited",
+    "destroyed",
+    "discarded",
     "in_system",
 ]
 
@@ -285,6 +287,33 @@ def check_lower_destruction_threshold(result, all_results):
     return result["destroyed_fraction"] > all_results["mode_adaptive"]["destroyed_fraction"]
 
 
+def check_early_discard_deterministic(result, all_results):
+    return (
+        is_close(result["destroyed_fraction"], 0.5, 1e-3)
+        and result["discarded"] == result["destroyed"]
+        and is_close(result["mean_sojourn_time"], 10.0)
+        and result["mean_waiting_time_1"] == 0.0
+        and result["max_queue_length_1"] <= 1
+    )
+
+
+def check_early_discard_never(result, all_results):
+    return (
+        result["destroyed_fraction"] < all_results["mode_never"]["destroyed_fraction"]
+        and result["discarded"] == result["destroyed"]
+        and is_close(result["mean_sojourn_time"], 10.0)
+        and result["mean_waiting_time_1"] == 0.0
+    )
+
+
+def check_early_discard_adaptive(result, all_results):
+    return (
+        result["destroyed_fraction"] < all_results["mode_adaptive"]["destroyed_fraction"]
+        and result["accelerated_time_fraction"] < all_results["mode_adaptive"]["accelerated_time_fraction"]
+        and 0 < result["discarded"] <= result["destroyed"]
+    )
+
+
 def check_threshold_edge_inclusive(result, all_results):
     return result["destroyed_fraction"] == 0.0 and is_close(result["mean_sojourn_time"], 10.0)
 
@@ -494,12 +523,41 @@ SCENARIOS = [
     ),
 ]
 
+SCENARIOS += [
+    VerificationScenario(
+        "early_discard_deterministic",
+        "Раннє відкидання: інтервал 4 мс, без ресурсу — відкидається кожен другий пакет",
+        "arrival=constant 4; control=never; early_discard",
+        constant_arrivals(4.0, control_mode="never", early_discard=True),
+        "P_зн = 0.5; усі знищені відкинуто до K1; доставлені мають T = 10 мс без очікування",
+        check_early_discard_deterministic,
+    ),
+    VerificationScenario(
+        "early_discard_never",
+        "Раннє відкидання в базовому B8 без ресурсу",
+        "control=never; early_discard",
+        {"control_mode": "never", "early_discard": True},
+        "P_зн менше, ніж у never; усі знищені відкинуто, доставлені мають T = 10 мс",
+        check_early_discard_never,
+        deterministic=False,
+    ),
+    VerificationScenario(
+        "early_discard_adaptive",
+        "Раннє відкидання в базовому B8 з керуванням ресурсом",
+        "control=adaptive; early_discard",
+        {"control_mode": "adaptive", "early_discard": True},
+        "P_зн і частка часу R=1 менші, ніж у базового B8",
+        check_early_discard_adaptive,
+        deterministic=False,
+    ),
+]
+
 SCENARIOS_BY_KEY = {scenario.key: scenario for scenario in SCENARIOS}
 
 
 def run_single_replication(task):
     scenario_key, seed = task
-    return scenario_key, Model(SCENARIOS_BY_KEY[scenario_key].build_config(seed)).simulate().to_dict()
+    return scenario_key, TransmissionModel(SCENARIOS_BY_KEY[scenario_key].build_config(seed)).simulate().to_dict()
 
 
 def replication_tasks():
@@ -599,14 +657,14 @@ def protocol_title(text):
 
 
 def save_event_protocols():
-    first_events_model = Model(protocol_config(PROTOCOL_EVENT_COUNT))
+    first_events_model = TransmissionModel(protocol_config(PROTOCOL_EVENT_COUNT))
     first_events_model.simulate()
     write_text(
         PROTOCOL_FILE,
         protocol_title(f"Протокол перших {PROTOCOL_EVENT_COUNT} подій") + first_events_model.format_protocol() + "\n",
     )
 
-    switch_model = Model(protocol_config(SWITCH_SEARCH_EVENTS))
+    switch_model = TransmissionModel(protocol_config(SWITCH_SEARCH_EVENTS))
     switch_model.simulate()
     switch_positions = [index for index, entry in enumerate(switch_model.protocol) if entry.resource_switch]
     if not switch_positions:

@@ -9,7 +9,7 @@ import numpy as np
 from scipy import stats
 
 from simulation.config import ModelConfig
-from simulation.model import Model
+from simulation.transmission_model import TransmissionModel
 
 RESULTS_DIRECTORY = Path(__file__).resolve().parent.parent / "results"
 RUN_PARAMS_FILE = RESULTS_DIRECTORY / "run_params.json"
@@ -22,11 +22,11 @@ def results_path(filename):
 
 
 def simulate_to_dict(config):
-    return Model(config).simulate().to_dict()
+    return TransmissionModel(config).simulate().to_dict()
 
 
 def simulate_with_trace(config):
-    results = Model(config).simulate()
+    results = TransmissionModel(config).simulate()
     return results.to_dict(), [asdict(snapshot) for snapshot in results.trace]
 
 

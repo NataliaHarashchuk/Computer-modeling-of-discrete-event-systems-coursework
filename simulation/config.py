@@ -21,6 +21,7 @@ class ModelConfig:
     activation_threshold: float = 0.30
     deactivation_threshold: float | None = None
     control_mode: str = "adaptive"
+    early_discard: bool = False
     warmup_time: float = 0.0
     simulation_time: float = 10000.0
     seed: int | None = 1
@@ -59,6 +60,12 @@ class ModelConfig:
         if self.deactivation_threshold is None:
             return self.activation_threshold
         return self.deactivation_threshold
+
+    @property
+    def arrival_delay_mean(self):
+        if self.arrival_distribution == "uniform":
+            return self.arrival_center
+        return self.arrival_mean
 
     @property
     def arrival_center(self):

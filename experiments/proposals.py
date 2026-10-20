@@ -42,14 +42,25 @@ RESPONSE_KEYS = (
 )
 HYSTERESIS_OFF_THRESHOLDS = [round(0.30 - 0.025 * step, 3) for step in range(9)]
 
-ADAPTIVE_VARIANTS = (
-    ("Базовий (30/30, N=100)", dict(activation_threshold=0.30, deactivation_threshold=0.30, window_size=100)),
-    ("Гістерезис 30/20", dict(activation_threshold=0.30, deactivation_threshold=0.20, window_size=100)),
-    ("Гістерезис 30/25", dict(activation_threshold=0.30, deactivation_threshold=0.25, window_size=100)),
-    ("Гістерезис 25/15", dict(activation_threshold=0.25, deactivation_threshold=0.15, window_size=100)),
-    ("Поріг 25 без гістерезису", dict(activation_threshold=0.25, deactivation_threshold=0.25, window_size=100)),
-    ("Вікно N=300", dict(activation_threshold=0.30, deactivation_threshold=0.30, window_size=300)),
-    ("Гістерезис 30/20 + N=300", dict(activation_threshold=0.30, deactivation_threshold=0.20, window_size=300)),
+PROPOSAL_VARIANTS = (
+    ("Базовий (30/30, N=100)", "Базовий 30/30",
+     dict(activation_threshold=0.30, deactivation_threshold=0.30, window_size=100)),
+    ("Гістерезис 30/20", "Гіст. 30/20",
+     dict(activation_threshold=0.30, deactivation_threshold=0.20, window_size=100)),
+    ("Гістерезис 30/25", "Гіст. 30/25",
+     dict(activation_threshold=0.30, deactivation_threshold=0.25, window_size=100)),
+    ("Гістерезис 25/15", "Гіст. 25/15",
+     dict(activation_threshold=0.25, deactivation_threshold=0.15, window_size=100)),
+    ("Поріг 25 без гістерезису", "Поріг 25/25",
+     dict(activation_threshold=0.25, deactivation_threshold=0.25, window_size=100)),
+    ("Вікно N=300", "N=300",
+     dict(activation_threshold=0.30, deactivation_threshold=0.30, window_size=300)),
+    ("Гістерезис 30/20 + N=300", "Гіст. 30/20 + N=300",
+     dict(activation_threshold=0.30, deactivation_threshold=0.20, window_size=300)),
+    ("Раннє відкидання без ресурсу", "Відкидання, R=0",
+     dict(control_mode="never", early_discard=True)),
+    ("Раннє відкидання + керування 30/30", "Відкидання + 30/30",
+     dict(activation_threshold=0.30, deactivation_threshold=0.30, window_size=100, early_discard=True)),
 )
 REFERENCE_VARIANTS = (
     ("Без керування (never)", dict(control_mode="never")),
@@ -157,8 +168,8 @@ def plot_horizontal_bars(axis, labels, samples_list, key, scale, x_label, title,
 
 
 def plot_comparison(labels, samples_list, params):
-    caption = simulation_caption_for(params, "керування adaptive, спільні випадкові числа")
-    figure, axes = create_figure(caption, rows=1, columns=3, width=15.5, height=5.0)
+    caption = simulation_caption_for(params, "спільні випадкові числа для всіх варіантів")
+    figure, axes = create_figure(caption, rows=1, columns=3, width=15.5, height=6.0)
     plot_horizontal_bars(
         axes[0], labels, samples_list, "destroyed_fraction", 100.0,
         "Частка знищених пакетів P_зн, %", "Частка знищених пакетів",
@@ -284,15 +295,19 @@ def two_way_anova(samples_by_cell, key):
     degrees = {"A": count_a - 1, "B": count_b - 1, "AB": (count_a - 1) * (count_b - 1)}
     degrees_error = count_a * count_b * (replications - 1)
     mean_square_error = sum_squares_error / degrees_error
+    sum_squares_total = float(np.sum((data - grand_mean) ** 2))
     rows = []
     for source_key, source_name in (("A", "θ_off"), ("B", "N"), ("AB", "θ_off × N")):
         mean_square = sum_squares[source_key] / degrees[source_key]
         f_value = mean_square / mean_square_error
         f_critical = float(stats.f.ppf(1 - SIGNIFICANCE_LEVEL, degrees[source_key], degrees_error))
         p_value = float(stats.f.sf(f_value, degrees[source_key], degrees_error))
+        effect_share = sum_squares[source_key] / sum_squares_total
+        partial_effect_share = sum_squares[source_key] / (sum_squares[source_key] + sum_squares_error)
         rows.append([source_name, sum_squares[source_key], degrees[source_key], mean_square, f_value, f_critical,
-                     p_value, "істотний" if f_value > f_critical else "неістотний"])
-    rows.append(["Залишок", sum_squares_error, degrees_error, mean_square_error, "", "", "", ""])
+                     p_value, effect_share, partial_effect_share,
+                     "істотний" if f_value > f_critical else "неістотний"])
+    rows.append(["Залишок", sum_squares_error, degrees_error, mean_square_error, "", "", "", "", "", ""])
     return rows
 
 
@@ -309,7 +324,7 @@ def two_factor_means_rows(samples_by_cell):
 
 def plot_two_factor(samples_by_cell, params):
     caption = simulation_caption_for(
-        params, f"θ_on = 30%; незалежні потоки випадкових чисел для кожної комбінації; смуга — 95% ДІ",
+        params, "θ_on = 30%; незалежні потоки випадкових чисел для кожної комбінації; смуга — 95% ДІ",
     )
     figure, axes = create_figure(caption, rows=1, columns=3, width=15.5, height=4.6)
     x_values = [threshold * 100 for threshold in TWO_FACTOR_OFF_THRESHOLDS]
@@ -332,8 +347,8 @@ def main():
     start = time.perf_counter()
     params = load_run_params()
 
-    labels = [label for label, _ in ADAPTIVE_VARIANTS]
-    samples_list = [run_variant(params, overrides) for _, overrides in ADAPTIVE_VARIANTS]
+    labels = [label for label, _, _ in PROPOSAL_VARIANTS]
+    samples_list = [run_variant(params, overrides) for _, _, overrides in PROPOSAL_VARIANTS]
     baseline = samples_list[0]
     reference_samples = [(label, run_variant(params, overrides)) for label, overrides in REFERENCE_VARIANTS]
 
@@ -344,10 +359,7 @@ def main():
     ]
     rows += [comparison_row(label, samples, baseline) + ["—"] for label, samples in reference_samples]
     write_csv("proposal_comparison.csv", COMPARISON_HEADER, rows)
-    plot_comparison(
-        ["Базовий 30/30", "Гіст. 30/20", "Гіст. 30/25", "Гіст. 25/15", "Поріг 25/25", "N=300", "Гіст. 30/20 + N=300"],
-        samples_list, params,
-    )
+    plot_comparison([short_label for _, short_label, _ in PROPOSAL_VARIANTS], samples_list, params)
 
     sweep_samples = run_hysteresis_sweep(params)
     write_csv(
@@ -373,7 +385,8 @@ def main():
         anova_rows += [[label] + row for row in two_way_anova(samples_by_cell, key)]
     write_csv(
         "proposal_two_factor_anova.csv",
-        ["Відгук", "Джерело мінливості", "SS", "df", "MS", "F", "F_крит (alpha=0.05)", "p-value", "Вплив"],
+        ["Відгук", "Джерело мінливості", "SS", "df", "MS", "F", "F_крит (alpha=0.05)", "p-value",
+         "η² (частка загальної SS)", "Частковий η²", "Вплив"],
         anova_rows,
     )
     plot_two_factor(samples_by_cell, params)

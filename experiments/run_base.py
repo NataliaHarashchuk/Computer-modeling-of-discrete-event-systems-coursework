@@ -11,9 +11,9 @@ from experiments.plotting import (
     add_horizontal_reference, add_legend, add_vertical_reference, create_figure, label_axes,
     plot_bars, save_figure, series_color, simulation_caption, use_percent_axis,
 )
-from simulation.model import Model
+from simulation.config import CONTROL_MODES
+from simulation.transmission_model import TransmissionModel
 
-CONTROL_MODES = ("adaptive", "never", "always")
 MODE_LABELS = {
     "adaptive": "З керуванням",
     "never": "Без керування",
@@ -143,11 +143,12 @@ def anova_one_way(groups):
     f_value = mean_square_between / mean_square_within
     f_critical = float(stats.f.ppf(1 - SIGNIFICANCE_LEVEL, df_between, df_within))
     p_value = float(stats.f.sf(f_value, df_between, df_within))
+    effect_share = sum_squares_between / (sum_squares_between + sum_squares_within)
     return {
         "ss_between": sum_squares_between, "ss_within": sum_squares_within,
         "df_between": df_between, "df_within": df_within,
         "ms_between": mean_square_between, "ms_within": mean_square_within,
-        "f": f_value, "f_critical": f_critical, "p": p_value,
+        "f": f_value, "f_critical": f_critical, "p": p_value, "eta_squared": effect_share,
     }
 
 
@@ -168,13 +169,13 @@ def build_anova_rows(results_by_mode):
         rows.append([
             name, manual["ss_between"], manual["ss_within"], manual["df_between"], manual["df_within"],
             manual["ms_between"], manual["ms_within"], manual["f"], manual["f_critical"], manual["p"],
-            float(reference.statistic), float(reference.pvalue), conclusion,
+            float(reference.statistic), float(reference.pvalue), manual["eta_squared"], conclusion,
         ])
     return rows
 
 
 def collect_sojourn_times(config):
-    model = Model(config)
+    model = TransmissionModel(config)
     sojourn_times = []
     destroyed_flags = []
     warmup_time = config.warmup_time
@@ -249,11 +250,11 @@ def main():
     write_csv("base_anova.csv", [
         "Відгук", "SS між групами", "SS всередині груп", "df між групами", "df всередині груп",
         "MS між групами", "MS всередині груп", "F", "F_крит (alpha=0.05)", "p-value",
-        "F (scipy f_oneway)", "p-value (scipy f_oneway)", "Висновок",
+        "F (scipy f_oneway)", "p-value (scipy f_oneway)", "η² (частка SS між групами)", "Висновок",
     ], anova_rows)
     print("\nДисперсійний аналіз (режим керування, 3 рівні, незалежні потоки випадкових чисел)")
     for row in anova_rows:
-        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p = {row[9]:.3g}; {row[12]}")
+        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p = {row[9]:.3g}, η² = {row[12]:.4f}; {row[13]}")
 
     histogram_configs = [
         base_config_from_run_params(params, control_mode=mode, seed=HISTOGRAM_SEED) for mode in HISTOGRAM_MODES
