@@ -14,7 +14,6 @@ from simulation.model import Model
 RESULTS_DIRECTORY = Path(__file__).resolve().parent.parent / "results"
 RUN_PARAMS_FILE = RESULTS_DIRECTORY / "run_params.json"
 CONFIDENCE_LEVEL = 0.95
-MILLISECONDS_PER_SECOND = 1000.0
 
 
 def results_path(filename):
@@ -103,4 +102,11 @@ def write_csv(filename, header, rows):
         writer = csv.writer(file)
         writer.writerow(header)
         writer.writerows(rows)
+    return path
+
+
+def write_text(filename, text):
+    path = results_path(filename)
+    with open(path, "w", encoding="utf-8-sig") as file:
+        file.write(text)
     return path

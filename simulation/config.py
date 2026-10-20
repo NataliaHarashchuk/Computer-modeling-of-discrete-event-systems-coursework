@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, replace
 
 ARRIVAL_DISTRIBUTIONS = ("uniform", "exponential", "constant")
@@ -38,6 +39,8 @@ class ModelConfig:
             raise ValueError("arrival interval bounds must satisfy 0 < arrival_min <= arrival_max")
         if self.arrival_mean <= 0 or self.service_time_normal <= 0 or self.service_time_accelerated <= 0:
             raise ValueError("mean times must be positive")
+        if self.arrival_distribution == "uniform" and not math.isclose(self.arrival_mean, self.arrival_center):
+            raise ValueError("for uniform arrivals arrival_mean must equal (arrival_min + arrival_max) / 2")
         if self.window_size < 1:
             raise ValueError("window_size must be at least 1")
         if self.activation_threshold < 0.0:

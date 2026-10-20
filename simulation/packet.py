@@ -6,7 +6,6 @@ class NodeRecord:
     node_name: str
     arrival_time: float
     service_start_time: float | None = None
-    service_duration: float | None = None
     accelerated: bool | None = None
 
     @property

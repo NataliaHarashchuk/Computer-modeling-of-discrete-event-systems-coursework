@@ -10,7 +10,6 @@ class Sink(Element):
         self.destroyed_count = 0
         self.accelerated_packets_count = 0
         self.sojourn_time_sum = 0.0
-        self.sojourn_time_square_sum = 0.0
         self.exit_listeners = []
 
     @property
@@ -23,13 +22,6 @@ class Sink(Element):
             return 0.0
         return self.sojourn_time_sum / self.exited_count
 
-    @property
-    def sojourn_time_variance(self):
-        if self.exited_count == 0:
-            return 0.0
-        mean = self.mean_sojourn_time
-        return max(self.sojourn_time_square_sum / self.exited_count - mean * mean, 0.0)
-
     def add_exit_listener(self, listener):
         self.exit_listeners.append(listener)
 
@@ -37,7 +29,6 @@ class Sink(Element):
         packet.exit_time = self.current_time
         packet.destroyed = packet.sojourn_time > self.destruction_threshold + self.time_tolerance
         self.sojourn_time_sum += packet.sojourn_time
-        self.sojourn_time_square_sum += packet.sojourn_time ** 2
         if packet.was_accelerated:
             self.accelerated_packets_count += 1
         if packet.destroyed:
@@ -52,7 +43,3 @@ class Sink(Element):
         self.destroyed_count = 0
         self.accelerated_packets_count = 0
         self.sojourn_time_sum = 0.0
-        self.sojourn_time_square_sum = 0.0
-
-    def describe_state(self):
-        return f"{self.name}: доставлено {self.delivered_count}, знищено {self.destroyed_count}"

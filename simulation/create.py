@@ -22,6 +22,3 @@ class Create(Element):
 
     def reset_statistics(self):
         self.created_count = 0
-
-    def describe_state(self):
-        return f"{self.name}: створено {self.created_count}"

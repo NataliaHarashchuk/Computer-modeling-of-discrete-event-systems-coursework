@@ -22,6 +22,3 @@ class Element:
 
     def reset_statistics(self):
         pass
-
-    def describe_state(self):
-        return self.name

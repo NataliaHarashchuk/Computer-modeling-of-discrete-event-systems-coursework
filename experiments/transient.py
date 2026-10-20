@@ -4,7 +4,6 @@ import time
 import numpy as np
 
 from experiments.common import (
-    MILLISECONDS_PER_SECOND,
     parallel_map,
     replicate_configs,
     save_run_params,
@@ -24,25 +23,26 @@ from experiments.plotting import (
     use_thousands_separator,
 )
 from simulation.config import ModelConfig
+from simulation.model import MILLISECONDS_PER_SECOND
 
 PILOT_RUNS = 8
 HORIZON_MS = 2_000_000.0
 TRACE_INTERVAL_MS = 1000.0
 RELATIVE_PRECISION = 0.05
 STEADY_LEVEL_TAIL_SHARE = 0.5
-WARMUP_HALF_WINDOW_BINS = 5
-WARMUP_NOISE_QUANTILE = 1.0
+WELCH_HALF_WINDOW_CANDIDATES = (5, 10, 20, 50, 100, 200)
 WARMUP_SAFETY_FACTOR = 2.0
+WARMUP_PLOT_MIN_HORIZON_MS = 60_000.0
+WARMUP_PLOT_HORIZON_FACTOR = 4.0
 WARMUP_ROUNDING_MS = 5_000.0
 SIMULATION_TIME_ROUNDING_MS = 100_000.0
 SEED_OFFSET = 500
 
 RESPONSES = (
-    ("destroyed_fraction", "Частка знищених пакетів P_зн", "P_зн"),
-    ("activations_per_second", "Частота підключення ресурсу, 1/с", "Підключень за секунду, 1/с"),
+    ("destroyed_fraction", "Частка знищених пакетів P_зн", "Частка знищених P_зн"),
+    ("activations_per_second", "Частота підключення ресурсу", "Підключень за секунду, 1/с"),
     ("accelerated_time_fraction", "Частка часу з увімкненим ресурсом", "Частка часу з R=1"),
 )
-WARMUP_DETECTION_RESPONSES = ("destroyed_fraction",)
 
 
 def cumulative_response(trace, key):
@@ -86,37 +86,42 @@ def round_up(value, step):
 
 
 def welch_moving_average(values, half_window):
-    smoothed = np.empty(len(values) - half_window)
-    for index in range(len(smoothed)):
-        reach = min(index, half_window)
-        smoothed[index] = values[index - reach:index + reach + 1].mean()
-    return smoothed
+    cumulative = np.concatenate(([0.0], np.cumsum(values)))
+    indices = np.arange(len(values) - half_window)
+    reach = np.minimum(indices, half_window)
+    window_sums = cumulative[indices + reach + 1] - cumulative[indices - reach]
+    return window_sums / (2 * reach + 1)
+
+
+def smooth_until_tail_within_precision(ensemble_interval, interval_times, tail_start_time, tail_level, precision):
+    for half_window in WELCH_HALF_WINDOW_CANDIDATES:
+        smoothed = welch_moving_average(ensemble_interval, half_window)
+        smoothed_times = interval_times[:len(smoothed)]
+        deviation = np.abs(smoothed - tail_level)
+        tail_max_deviation = float(deviation[smoothed_times >= tail_start_time].max())
+        if tail_max_deviation <= precision:
+            break
+    return half_window, smoothed, smoothed_times, deviation, tail_max_deviation
 
 
 def analyse_response(traces, key):
-    times = None
-    cumulative_runs = []
-    interval_runs = []
-    for trace in traces:
-        times, cumulative = cumulative_response(trace, key)
-        cumulative_runs.append(cumulative)
-        interval_times, interval_values = interval_response(trace, key)
-        interval_runs.append(interval_values)
-    cumulative_runs = np.array(cumulative_runs)
-    tail_start = int(len(times) * (1 - STEADY_LEVEL_TAIL_SHARE))
+    times = cumulative_response(traces[0], key)[0]
+    interval_times = interval_response(traces[0], key)[0]
+    cumulative_runs = np.array([cumulative_response(trace, key)[1] for trace in traces])
+    interval_runs = np.array([interval_response(trace, key)[1] for trace in traces])
     steady_level = float(cumulative_runs[:, -1].mean())
     precision = RELATIVE_PRECISION * steady_level
     spread = cumulative_runs.max(axis=0) - cumulative_runs.min(axis=0)
     observed = times > 0
     criterion_time = first_time_after_which_always(times[observed], spread[observed] < precision)
-    ensemble_interval = np.array(interval_runs).mean(axis=0)
-    smoothed = welch_moving_average(ensemble_interval, WARMUP_HALF_WINDOW_BINS)
-    smoothed_times = interval_times[:len(smoothed)]
-    tail_level = float(ensemble_interval[tail_start:].mean())
-    smoothed_deviation = np.abs(smoothed - tail_level)
-    tail_noise = float(np.quantile(smoothed_deviation[smoothed_times >= times[tail_start]], WARMUP_NOISE_QUANTILE))
-    warmup_band = max(precision, tail_noise)
-    warmup_time = first_time_after_which_always(smoothed_times, smoothed_deviation <= warmup_band)
+    ensemble_interval = interval_runs.mean(axis=0)
+    tail_start_index = int(len(ensemble_interval) * (1 - STEADY_LEVEL_TAIL_SHARE))
+    tail_start_time = float(interval_times[tail_start_index])
+    tail_level = float(ensemble_interval[tail_start_index:].mean())
+    half_window, smoothed, smoothed_times, deviation, tail_max_deviation = smooth_until_tail_within_precision(
+        ensemble_interval, interval_times, tail_start_time, tail_level, precision
+    )
+    warmup_time = first_time_after_which_always(smoothed_times, deviation <= precision)
     return {
         "times": times,
         "cumulative_runs": cumulative_runs,
@@ -127,7 +132,8 @@ def analyse_response(traces, key):
         "smoothed_times": smoothed_times,
         "smoothed": smoothed,
         "tail_level": tail_level,
-        "warmup_band": warmup_band,
+        "half_window": half_window,
+        "tail_max_deviation": tail_max_deviation,
         "warmup_time": warmup_time,
     }
 
@@ -149,6 +155,7 @@ def plot_cumulative_means(analyses, warmup_time, simulation_time, caption):
             use_percent_axis(axis)
     axes[-1].set_xlabel("Модельний час t, мс (логарифмічна шкала)")
     axes[1].legend(loc="lower right", ncol=2)
+    figure.tight_layout()
     return save_figure(figure, "transient_cumulative.png")
 
 
@@ -167,20 +174,22 @@ def plot_spread(analyses, simulation_time, caption):
     label_axes(axis, "Розкид середніх між прогонами відносно точності ε",
                "Модельний час t, мс (логарифмічна шкала)", "max |ȳ_i(t) − ȳ_j(t)| / ε")
     add_legend(axis, "lower left")
+    figure.tight_layout()
     return save_figure(figure, "transient_spread.png")
 
 
 def plot_warmup(analyses, warmup_time, caption):
     figure, axes = create_figure(caption, rows=len(RESPONSES), columns=1, width=8.5, height=9.5, sharex=True)
+    horizon = max(WARMUP_PLOT_MIN_HORIZON_MS, WARMUP_PLOT_HORIZON_FACTOR * warmup_time)
     for slot, (axis, (key, title, y_label)) in enumerate(zip(axes, RESPONSES)):
         analysis = analyses[key]
-        limit = analysis["smoothed_times"] <= 60_000
+        limit = analysis["smoothed_times"] <= horizon
         plot_line(axis, analysis["smoothed_times"][limit], analysis["smoothed"][limit],
-                  f"Середнє за прогонами, ковзне (метод Велча, w = {WARMUP_HALF_WINDOW_BINS})", slot,
+                  f"Середнє за прогонами, ковзне (метод Велча, w = {analysis['half_window']})", slot,
                   markers=False, linewidth=1.6)
         add_horizontal_reference(axis, analysis["tail_level"], "Сталий рівень")
-        axis.axhspan(analysis["tail_level"] - analysis["warmup_band"], analysis["tail_level"] + analysis["warmup_band"],
-                     color="#8a8984", alpha=0.12, linewidth=0, label="Сталий рівень ± max(ε, шум)")
+        axis.axhspan(analysis["tail_level"] - analysis["precision"], analysis["tail_level"] + analysis["precision"],
+                     color="#8a8984", alpha=0.12, linewidth=0, label="Сталий рівень ± ε")
         axis.axvline(warmup_time, color="#0b0b0b", linewidth=1.2, linestyle=":",
                      label=f"T_warm = {warmup_time:,.0f} мс".replace(",", " "))
         label_axes(axis, f"{title} на інтервалах по {TRACE_INTERVAL_MS:.0f} мс", "", y_label)
@@ -189,6 +198,7 @@ def plot_warmup(analyses, warmup_time, caption):
             use_percent_axis(axis, decimals=1)
         add_legend(axis, "lower right")
     axes[-1].set_xlabel("Модельний час t, мс")
+    figure.tight_layout()
     return save_figure(figure, "transient_warmup.png")
 
 
@@ -200,7 +210,7 @@ def main():
     analyses = {key: analyse_response(traces, key) for key, _, _ in RESPONSES}
 
     criterion_time = max(analysis["criterion_time"] for analysis in analyses.values())
-    detected_warmup = max(analyses[key]["warmup_time"] for key in WARMUP_DETECTION_RESPONSES)
+    detected_warmup = max(analysis["warmup_time"] for analysis in analyses.values())
     warmup_time = round_up(max(detected_warmup, TRACE_INTERVAL_MS) * WARMUP_SAFETY_FACTOR, WARMUP_ROUNDING_MS)
     simulation_time = round_up(criterion_time, SIMULATION_TIME_ROUNDING_MS)
 
@@ -212,15 +222,17 @@ def main():
             f"{analysis['steady_level']:.5f}",
             f"{analysis['precision']:.5f}",
             f"{analysis['criterion_time']:.0f}",
-            f"{analysis['warmup_band']:.5f}",
+            analysis["half_window"],
+            f"{analysis['tail_max_deviation']:.5f}",
             f"{analysis['warmup_time']:.0f}",
-            "так" if key in WARMUP_DETECTION_RESPONSES else "ні, зміщення в межах шуму пробних прогонів",
             f"{analysis['spread'][-1]:.5f}",
         ])
     write_csv(
         "transient.csv",
         ["Відгук", "Сталий рівень", "Точність ε (5% рівня)", "T за критерієм (3.1), мс",
-         "Смуга сталого рівня max(ε, шум)", "Кінець перехідного періоду, мс", "Використано для T_warm", f"Розкид при t = {HORIZON_MS:.0f} мс"],
+         f"Півширина вікна Велча w, інтервалів по {TRACE_INTERVAL_MS:.0f} мс",
+         "Макс. відхилення згладженого ряду на другій половині горизонту",
+         "Кінець перехідного періоду (відхилення ≤ ε), мс", f"Розкид при t = {HORIZON_MS:.0f} мс"],
         rows,
     )
 
@@ -241,7 +253,6 @@ def main():
             "trace_interval_ms": TRACE_INTERVAL_MS,
             "relative_precision": RELATIVE_PRECISION,
             "detected_warmup_ms": detected_warmup,
-            "warmup_detection_responses": list(WARMUP_DETECTION_RESPONSES),
             "warmup_safety_factor": WARMUP_SAFETY_FACTOR,
             "criterion_time_ms": criterion_time,
             "responses": {
@@ -249,7 +260,8 @@ def main():
                     "steady_level": analyses[key]["steady_level"],
                     "precision": analyses[key]["precision"],
                     "criterion_time_ms": analyses[key]["criterion_time"],
-                    "warmup_band": analyses[key]["warmup_band"],
+                    "welch_half_window": analyses[key]["half_window"],
+                    "tail_max_deviation": analyses[key]["tail_max_deviation"],
                     "warmup_time_ms": analyses[key]["warmup_time"],
                 }
                 for key, _, _ in RESPONSES
@@ -259,7 +271,7 @@ def main():
 
     print(f"Пробні прогони: {PILOT_RUNS} × {HORIZON_MS:.0f} мс, крок трасування {TRACE_INTERVAL_MS:.0f} мс")
     for row in rows:
-        print("  " + " | ".join(row))
+        print("  " + " | ".join(str(value) for value in row))
     print(f"Перехідний період (виявлено): {detected_warmup:.0f} мс → T_warm = {warmup_time:.0f} мс")
     print(f"Критерій (3.1): T = {criterion_time:.0f} мс → T_mod = {simulation_time:.0f} мс")
     print(f"Час виконання: {time.time() - started:.1f} с")

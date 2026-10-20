@@ -1,15 +1,12 @@
 {
-  "warmup_time_ms": 10000.0,
+  "warmup_time_ms": 30000.0,
   "simulation_time_ms": 600000.0,
   "transient": {
     "pilot_runs": 8,
     "horizon_ms": 2000000.0,
     "trace_interval_ms": 1000.0,
     "relative_precision": 0.05,
-    "detected_warmup_ms": 3000.0,
-    "warmup_detection_responses": [
-      "destroyed_fraction"
-    ],
+    "detected_warmup_ms": 13000.0,
     "warmup_safety_factor": 2.0,
     "criterion_time_ms": 515000.0,
     "responses": {
@@ -17,26 +14,29 @@
         "steady_level": 0.2815650935414974,
         "precision": 0.01407825467707487,
         "criterion_time_ms": 10000.0,
-        "warmup_band": 0.01407825467707487,
+        "welch_half_window": 5,
+        "tail_max_deviation": 0.003366691516773823,
         "warmup_time_ms": 3000.0
       },
       "activations_per_second": {
         "steady_level": 7.26475,
         "precision": 0.36323750000000005,
         "criterion_time_ms": 515000.0,
-        "warmup_band": 0.8256438256438257,
-        "warmup_time_ms": 948000.0
+        "welch_half_window": 50,
+        "tail_max_deviation": 0.24927351485148552,
+        "warmup_time_ms": 13000.0
       },
       "accelerated_time_fraction": {
         "steady_level": 0.3112100620505388,
         "precision": 0.015560503102526942,
         "criterion_time_ms": 302000.0,
-        "warmup_band": 0.03317781443542078,
-        "warmup_time_ms": 577000.0
+        "welch_half_window": 20,
+        "tail_max_deviation": 0.015324026626210296,
+        "warmup_time_ms": 3000.0
       }
     }
   },
-  "replications": 71,
+  "replications": 62,
   "replication_study": {
     "pilot_replications": 20,
     "pilot_seed_offset": 700,
@@ -45,28 +45,28 @@
     "minimum_replications": 20,
     "responses": {
       "destroyed_fraction": {
-        "mean": 0.2816000499050697,
-        "std": 0.00045681671668637374,
-        "precision": 0.002816000499050697,
-        "required": 0.5263183560437535
+        "mean": 0.28159507019513796,
+        "std": 0.0004357127661610673,
+        "precision": 0.0028159507019513796,
+        "required": 0.47882902741323763
       },
       "destroyed_per_second": {
-        "mean": 46.91191666666667,
-        "std": 0.11158123859779293,
-        "precision": 0.4691191666666667,
-        "required": 1.131477695507726
+        "mean": 46.912416666666665,
+        "std": 0.10419767959387753,
+        "precision": 0.4691241666666667,
+        "required": 0.9866667182588682
       },
       "activations_per_second": {
-        "mean": 7.261583333333334,
-        "std": 0.13596791309648346,
-        "precision": 0.07261583333333334,
-        "required": 70.11972561991654
+        "mean": 7.260416666666667,
+        "std": 0.12703648115348473,
+        "precision": 0.07260416666666668,
+        "required": 61.22993756155635
       },
       "accelerated_time_fraction": {
-        "mean": 0.3109074036607084,
-        "std": 0.0045870404867954795,
-        "precision": 0.003109074036607084,
-        "required": 43.53444521100653
+        "mean": 0.31091865428966997,
+        "std": 0.004257297084448174,
+        "precision": 0.0031091865428966997,
+        "required": 37.49767595482934
       }
     }
   }

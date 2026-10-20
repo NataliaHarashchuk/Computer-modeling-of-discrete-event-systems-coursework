@@ -158,6 +158,11 @@ def add_legend(axis, location="best"):
     axis.legend(loc=location)
 
 
+def add_framed_legend(axis, location="best", fontsize=None):
+    axis.legend(loc=location, fontsize=fontsize, frameon=True, facecolor=SURFACE_COLOR,
+                edgecolor=GRID_COLOR, framealpha=0.95)
+
+
 def save_figure(figure, filename):
     path = results_path(filename)
     figure.savefig(path)

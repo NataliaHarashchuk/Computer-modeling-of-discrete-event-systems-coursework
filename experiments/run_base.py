@@ -23,8 +23,10 @@ SIGNIFICANCE_LEVEL = 0.05
 DESTRUCTION_REQUIREMENT = 0.30
 DESTRUCTION_THRESHOLD_MS = 10.0
 HISTOGRAM_BIN_WIDTH_MS = 0.5
+HISTOGRAM_LOWER_EDGE_MS = 7.0
 HISTOGRAM_MODES = ("adaptive", "never")
 HISTOGRAM_SEED = 1
+MODE_SEED_OFFSETS = {"adaptive": 0, "never": 10_000, "always": 20_000}
 
 ALL_OUTPUTS = (
     ("destroyed_fraction", "Частка знищених пакетів P_зн"),
@@ -174,35 +176,45 @@ def build_anova_rows(results_by_mode):
 def collect_sojourn_times(config):
     model = Model(config)
     sojourn_times = []
+    destroyed_flags = []
     warmup_time = config.warmup_time
 
     def record(packet):
         if packet.exit_time >= warmup_time:
             sojourn_times.append(packet.sojourn_time)
+            destroyed_flags.append(packet.destroyed)
 
     model.sink.add_exit_listener(record)
     model.simulate()
-    return np.array(sojourn_times)
+    return np.array(sojourn_times), np.array(destroyed_flags, dtype=bool)
 
 
-def plot_sojourn_histogram(sojourn_by_mode, params):
+def right_closed_bin_shares(samples, edges, tolerance):
+    bin_indices = np.searchsorted(edges, samples - tolerance, side="left") - 1
+    counts = np.bincount(bin_indices, minlength=len(edges) - 1)[:len(edges) - 1]
+    return counts / samples.size
+
+
+def plot_sojourn_histogram(sojourn_by_mode, params, tolerance):
     caption = simulation_caption(params["simulation_time_ms"], params["warmup_time_ms"], 1,
-                                 f"одна реплікація на режим, seed = {HISTOGRAM_SEED}")
+                                 f"одна реплікація на режим, seed = {HISTOGRAM_SEED}; інтервали (a; b], "
+                                 f"T = 10 мс рівно — доставлені пакети")
     figure, axes = create_figure(caption, rows=1, columns=2, width=11.0, height=4.8, sharex=True)
-    upper_edge = max(samples.max() for samples in sojourn_by_mode.values())
-    bins = np.arange(0.0, upper_edge + HISTOGRAM_BIN_WIDTH_MS, HISTOGRAM_BIN_WIDTH_MS)
-    shares = {}
-    for mode, samples in sojourn_by_mode.items():
-        counts, _ = np.histogram(samples, bins=bins)
-        shares[mode] = counts / samples.size
-    y_limit = max(share.max() for share in shares.values()) * 1.12
-    for slot, (axis, mode) in enumerate(zip(axes, HISTOGRAM_MODES)):
-        samples = sojourn_by_mode[mode]
-        axis.bar(bins[:-1], shares[mode], width=HISTOGRAM_BIN_WIDTH_MS, align="edge",
-                 color=series_color(slot), edgecolor="#ffffff", linewidth=0.6,
-                 label=f"{MODE_LABELS[mode]} (n = {samples.size})")
+    upper_edge = max(samples.max() for samples, _ in sojourn_by_mode.values())
+    edges = np.arange(HISTOGRAM_LOWER_EDGE_MS, upper_edge + 2 * HISTOGRAM_BIN_WIDTH_MS, HISTOGRAM_BIN_WIDTH_MS)
+    shares = {mode: right_closed_bin_shares(samples, edges, tolerance) for mode, (samples, _) in sojourn_by_mode.items()}
+    y_limit = max(share.max() for share in shares.values()) * 1.15
+    destroyed_bins = edges[:-1] >= DESTRUCTION_THRESHOLD_MS
+    for axis, mode in zip(axes, HISTOGRAM_MODES):
+        samples, destroyed = sojourn_by_mode[mode]
+        axis.bar(edges[:-1][~destroyed_bins], shares[mode][~destroyed_bins], width=HISTOGRAM_BIN_WIDTH_MS,
+                 align="edge", color=series_color(0), edgecolor="#ffffff", linewidth=0.6,
+                 label=f"Доставлено, T ≤ 10 мс: {1 - destroyed.mean():.1%}")
+        axis.bar(edges[:-1][destroyed_bins], shares[mode][destroyed_bins], width=HISTOGRAM_BIN_WIDTH_MS,
+                 align="edge", color=series_color(1), edgecolor="#ffffff", linewidth=0.6,
+                 label=f"Знищено, T > 10 мс: {destroyed.mean():.1%}")
         add_vertical_reference(axis, DESTRUCTION_THRESHOLD_MS, "Поріг знищення: 10 мс")
-        label_axes(axis, f"Розподіл часу перебування: {MODE_LABELS[mode].lower()}",
+        label_axes(axis, f"Розподіл часу перебування: {MODE_LABELS[mode].lower()} (n = {samples.size})",
                    "Час перебування пакета, мс", "Частка пакетів")
         axis.set_ylim(0, y_limit)
         add_legend(axis, "upper right")
@@ -217,7 +229,9 @@ def main():
     configs = {
         mode: base_config_from_run_params(params, control_mode=mode) for mode in CONTROL_MODES
     }
-    results_by_mode = {mode: run_replications(configs[mode], replications) for mode in CONTROL_MODES}
+    results_by_mode = {
+        mode: run_replications(configs[mode], replications, MODE_SEED_OFFSETS[mode]) for mode in CONTROL_MODES
+    }
 
     summary_rows = build_base_summary(results_by_mode["adaptive"])
     write_csv("base_summary.csv",
@@ -237,19 +251,18 @@ def main():
         "MS між групами", "MS всередині груп", "F", "F_крит (alpha=0.05)", "p-value",
         "F (scipy f_oneway)", "p-value (scipy f_oneway)", "Висновок",
     ], anova_rows)
-    print("\nДисперсійний аналіз (режим керування, 3 рівні)")
+    print("\nДисперсійний аналіз (режим керування, 3 рівні, незалежні потоки випадкових чисел)")
     for row in anova_rows:
         print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p = {row[9]:.3g}; {row[12]}")
 
     histogram_configs = [
         base_config_from_run_params(params, control_mode=mode, seed=HISTOGRAM_SEED) for mode in HISTOGRAM_MODES
     ]
-    sojourn_arrays = parallel_map(collect_sojourn_times, histogram_configs)
-    sojourn_by_mode = dict(zip(HISTOGRAM_MODES, sojourn_arrays))
-    plot_sojourn_histogram(sojourn_by_mode, params)
-    for mode, samples in sojourn_by_mode.items():
+    sojourn_by_mode = dict(zip(HISTOGRAM_MODES, parallel_map(collect_sojourn_times, histogram_configs)))
+    plot_sojourn_histogram(sojourn_by_mode, params, histogram_configs[0].time_tolerance)
+    for mode, (samples, destroyed) in sojourn_by_mode.items():
         print(f"Час перебування, {mode}: n = {samples.size}, середнє = {samples.mean():.4f} мс, "
-              f"макс = {samples.max():.2f} мс, частка > 10 мс = {(samples > DESTRUCTION_THRESHOLD_MS).mean():.4f}")
+              f"макс = {samples.max():.2f} мс, частка знищених = {destroyed.mean():.4f}")
 
     print(f"\nЧас виконання: {time.perf_counter() - started_at:.1f} с")
 

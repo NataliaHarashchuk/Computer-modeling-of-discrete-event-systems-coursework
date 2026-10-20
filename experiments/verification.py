@@ -1,19 +1,16 @@
-import csv
 import time
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable
 
 import numpy as np
 
+from experiments.common import parallel_map, results_path, write_csv, write_text
 from simulation.config import ModelConfig
-from simulation.model import Model
+from simulation.model import MILLISECONDS_PER_SECOND, Model
 
-RESULTS_DIRECTORY = Path(__file__).resolve().parent.parent / "results"
-TABLE_FILE = RESULTS_DIRECTORY / "verification.csv"
-PROTOCOL_FILE = RESULTS_DIRECTORY / "event_protocol.txt"
-SWITCH_PROTOCOL_FILE = RESULTS_DIRECTORY / "event_protocol_switch.txt"
+TABLE_FILE = "verification.csv"
+PROTOCOL_FILE = "event_protocol.txt"
+SWITCH_PROTOCOL_FILE = "event_protocol_switch.txt"
 
 DETERMINISTIC_WARMUP_MS = 0.0
 DETERMINISTIC_SIMULATION_MS = 100000.0
@@ -30,6 +27,8 @@ PROTOCOL_SIMULATION_MS = 5000.0
 
 ABSOLUTE_TOLERANCE = 1e-6
 UTILIZATION_TOLERANCE = 5e-3
+LITTLE_LAW_RELATIVE_TOLERANCE = 1e-3
+DESTRUCTION_REQUIREMENT = 0.30
 
 HEADER = [
     "Сценарій",
@@ -45,6 +44,10 @@ HEADER = [
     "Частка часу R=1",
     "L1, пакетів",
     "L2, пакетів",
+    "max L1, пакетів",
+    "max L2, пакетів",
+    "W1, мс",
+    "W2, мс",
     "U1",
     "U2",
     "Середній час перебування, мс",
@@ -61,9 +64,17 @@ OUTPUT_KEYS = [
     "accelerated_time_fraction",
     "mean_queue_length_1",
     "mean_queue_length_2",
+    "max_queue_length_1",
+    "max_queue_length_2",
+    "mean_waiting_time_1",
+    "mean_waiting_time_2",
     "utilization_1",
     "utilization_2",
     "mean_sojourn_time",
+    "throughput_per_second",
+    "generated",
+    "exited",
+    "in_system",
 ]
 
 
@@ -118,9 +129,19 @@ def check_dd1_baseline(result, all_results):
         and result["destroyed_fraction"] == 0.0
         and is_close(result["utilization_1"], 5.0 / 6.0, UTILIZATION_TOLERANCE)
         and is_close(result["utilization_2"], 5.0 / 6.0, UTILIZATION_TOLERANCE)
-        and is_close(result["mean_queue_length_1"], 0.0)
-        and is_close(result["mean_queue_length_2"], 0.0)
+        and result["max_queue_length_1"] == 0
+        and result["max_queue_length_2"] == 0
         and result["activation_count"] == 0
+    )
+
+
+def check_arrival_after_channel_1(result, all_results):
+    return (
+        result["max_queue_length_1"] == 0
+        and result["max_queue_length_2"] == 0
+        and result["destroyed_fraction"] == 0.0
+        and is_close(result["mean_sojourn_time"], 10.0)
+        and is_close(result["utilization_1"], 1.0, UTILIZATION_TOLERANCE)
     )
 
 
@@ -147,6 +168,7 @@ def check_light_load(result, all_results):
     return (
         result["destroyed_fraction"] == 0.0
         and result["activation_count"] == 0
+        and result["max_queue_length_1"] == 0
         and is_close(result["mean_sojourn_time"], 10.0)
     )
 
@@ -176,11 +198,66 @@ def check_window_one(result, all_results):
     return result["activations_per_second"] > 2.0 * base_rate and result["activation_count"] > 0
 
 
-def check_mode_ordering(result, all_results):
+def check_hysteresis(result, all_results):
+    base = all_results["mode_adaptive"]
+    switch_balance = result["activation_count"] - result["deactivation_count"]
+    return (
+        result["activations_per_second"] < base["activations_per_second"]
+        and result["accelerated_time_fraction"] > base["accelerated_time_fraction"]
+        and result["destroyed_fraction"] < base["destroyed_fraction"]
+        and abs(switch_balance) <= 1.0
+    )
+
+
+def check_mode_adaptive(result, all_results):
     always = all_results["mode_always"]["destroyed_fraction"]
-    adaptive = all_results["mode_adaptive"]["destroyed_fraction"]
     never = all_results["mode_never"]["destroyed_fraction"]
-    return always < adaptive < never
+    switch_balance = result["activation_count"] - result["deactivation_count"]
+    return (
+        always < result["destroyed_fraction"] < never
+        and result["destroyed_fraction"] <= DESTRUCTION_REQUIREMENT
+        and 0.0 < result["accelerated_time_fraction"] < 1.0
+        and abs(switch_balance) <= 1.0
+    )
+
+
+def check_mode_always(result, all_results):
+    return (
+        result["activation_count"] == 0
+        and result["accelerated_time_fraction"] == 1.0
+        and is_close(result["utilization_1"], 4.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
+        and is_close(result["utilization_2"], 4.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
+    )
+
+
+def check_mode_never(result, all_results):
+    return (
+        result["activation_count"] == 0
+        and result["accelerated_time_fraction"] == 0.0
+        and is_close(result["utilization_1"], 5.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
+        and is_close(result["utilization_2"], 5.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
+    )
+
+
+def check_channel_2_queue_never_forms(result, all_results):
+    return (
+        result["max_queue_length_2"] == 0
+        and result["mean_queue_length_2"] == 0.0
+        and result["mean_waiting_time_2"] == 0.0
+        and result["activation_count"] > 0
+    )
+
+
+def check_little_law(result, all_results):
+    arrival_rate_per_ms = result["throughput_per_second"] / MILLISECONDS_PER_SECOND
+    little_queue_length = arrival_rate_per_ms * result["mean_waiting_time_1"]
+    return abs(result["mean_queue_length_1"] - little_queue_length) <= (
+        LITTLE_LAW_RELATIVE_TOLERANCE * result["mean_queue_length_1"]
+    )
+
+
+def check_flow_conservation(result, all_results):
+    return is_close(result["generated"], result["exited"] + result["in_system"], 1e-9)
 
 
 def check_faster_service(result, all_results):
@@ -201,13 +278,11 @@ def check_slower_service(result, all_results):
 
 
 def check_higher_destruction_threshold(result, all_results):
-    base = all_results["mode_adaptive"]
-    return result["destroyed_fraction"] < base["destroyed_fraction"]
+    return result["destroyed_fraction"] < all_results["mode_adaptive"]["destroyed_fraction"]
 
 
 def check_lower_destruction_threshold(result, all_results):
-    base = all_results["mode_adaptive"]
-    return result["destroyed_fraction"] > base["destroyed_fraction"]
+    return result["destroyed_fraction"] > all_results["mode_adaptive"]["destroyed_fraction"]
 
 
 def check_threshold_edge_inclusive(result, all_results):
@@ -224,8 +299,16 @@ SCENARIOS = [
         "D/D/1: інтервал 6 мс, обслуговування 5 мс, керування вимкнене",
         "arrival=constant 6; control=never",
         constant_arrivals(6.0, control_mode="never"),
-        "T=10 мс, знищень 0, U=5/6, L=0",
+        "T=10 мс, знищень 0, U=5/6, черги не утворюються",
         check_dd1_baseline,
+    ),
+    VerificationScenario(
+        "priority_arrival_after_channel_1",
+        "Пріоритет: надходження одночасно з кінцем обслуговування в K1 (інтервал 5 мс = обслуговуванню)",
+        "arrival=constant 5; control=never",
+        constant_arrivals(5.0, control_mode="never"),
+        "K1 звільняється раніше, ніж обробляється надходження: max L1=0, U1=1, T=10 мс",
+        check_arrival_after_channel_1,
     ),
     VerificationScenario(
         "threshold_edge_inclusive",
@@ -264,7 +347,7 @@ SCENARIOS = [
         "Мале навантаження: інтервал 12 мс (constant)",
         "arrival=constant 12; control=adaptive",
         constant_arrivals(12.0, control_mode="adaptive"),
-        "Знищень 0, ресурс не вмикається, T=10 мс",
+        "Знищень 0, ресурс не вмикається, черги немає, T=10 мс",
         check_light_load,
     ),
     VerificationScenario(
@@ -272,7 +355,7 @@ SCENARIOS = [
         "Мале навантаження: інтервал unif(9;15), центр 12 мс",
         "arrival=uniform 9..15; control=adaptive",
         {"arrival_min": 9.0, "arrival_max": 15.0, "arrival_mean": 12.0, "control_mode": "adaptive"},
-        "Знищень 0, ресурс не вмикається, T=10 мс",
+        "Знищень 0, ресурс не вмикається, черги немає, T=10 мс",
         check_light_load,
     ),
     VerificationScenario(
@@ -311,12 +394,21 @@ SCENARIOS = [
         deterministic=False,
     ),
     VerificationScenario(
+        "hysteresis_30_20",
+        "Гістерезис: вмикання при ≥30%, вимикання при <20%",
+        "θ_on=0.30; θ_off=0.20",
+        {"activation_threshold": 0.30, "deactivation_threshold": 0.20},
+        "Підключень рідше, ресурс увімкнений довше, P_зн менше, ніж без гістерезису; |підкл − відкл| ≤ 1",
+        check_hysteresis,
+        deterministic=False,
+    ),
+    VerificationScenario(
         "mode_adaptive",
         "Базовий B8: адаптивне керування, N=100, θ=0.30",
         "control=adaptive",
         {"control_mode": "adaptive"},
-        "Порядок P_зн: always < adaptive < never",
-        check_mode_ordering,
+        "always < P_зн < never; P_зн ≤ 0.30; 0 < частка часу R=1 < 1; |підкл − відкл| ≤ 1",
+        check_mode_adaptive,
         deterministic=False,
     ),
     VerificationScenario(
@@ -324,8 +416,8 @@ SCENARIOS = [
         "Базовий B8: ресурс завжди ввімкнений (4 мс)",
         "control=always",
         {"control_mode": "always"},
-        "Порядок P_зн: always < adaptive < never; U≈4/6",
-        check_mode_ordering,
+        "Підключень 0, частка часу R=1 дорівнює 1, U≈4/6",
+        check_mode_always,
         deterministic=False,
     ),
     VerificationScenario(
@@ -333,8 +425,35 @@ SCENARIOS = [
         "Базовий B8: ресурс вимкнений (5 мс)",
         "control=never",
         {"control_mode": "never"},
-        "Порядок P_зн: always < adaptive < never; U≈5/6",
-        check_mode_ordering,
+        "Підключень 0, частка часу R=1 дорівнює 0, U≈5/6",
+        check_mode_never,
+        deterministic=False,
+    ),
+    VerificationScenario(
+        "priority_channel_2_before_channel_1",
+        "Пріоритет K2 → K1: рішення контролера на виході застосовується до наступного запуску K1",
+        "control=adaptive",
+        {"control_mode": "adaptive"},
+        "Черга K2 не утворюється попри перемикання ресурсу: max L2=0, W2=0",
+        check_channel_2_queue_never_forms,
+        deterministic=False,
+    ),
+    VerificationScenario(
+        "little_law",
+        "Закон Літтла для черги K1: L1 = λ·W1",
+        "control=adaptive",
+        {"control_mode": "adaptive"},
+        "|L1 − λ·W1| ≤ 0.1% від L1",
+        check_little_law,
+        deterministic=False,
+    ),
+    VerificationScenario(
+        "flow_conservation",
+        "Баланс потоку без прогріву: створено = вийшло + у системі",
+        "control=adaptive; T_warm=0",
+        {"control_mode": "adaptive", "warmup_time": 0.0},
+        "Жоден пакет не губиться і не дублюється",
+        check_flow_conservation,
         deterministic=False,
     ),
     VerificationScenario(
@@ -375,40 +494,38 @@ SCENARIOS = [
     ),
 ]
 
-
-def run_single_replication(scenario, seed):
-    return Model(scenario.build_config(seed)).simulate().to_dict()
+SCENARIOS_BY_KEY = {scenario.key: scenario for scenario in SCENARIOS}
 
 
-def mean_outputs(replications):
-    return {key: float(np.mean([replication[key] for replication in replications])) for key in OUTPUT_KEYS}
+def run_single_replication(task):
+    scenario_key, seed = task
+    return scenario_key, Model(SCENARIOS_BY_KEY[scenario_key].build_config(seed)).simulate().to_dict()
 
 
-def run_all_scenarios(executor):
-    futures = {}
-    for scenario_index, scenario in enumerate(SCENARIOS):
-        base_seed = SEED_STRIDE * (scenario_index + 1)
-        futures[scenario.key] = [
-            executor.submit(run_single_replication, scenario, base_seed + replication)
-            for replication in range(scenario.replications)
-        ]
+def replication_tasks():
+    return [
+        (scenario.key, SEED_STRIDE * (scenario_index + 1) + replication)
+        for scenario_index, scenario in enumerate(SCENARIOS)
+        for replication in range(scenario.replications)
+    ]
+
+
+def run_all_scenarios():
+    replications_by_key = {scenario.key: [] for scenario in SCENARIOS}
+    for scenario_key, result in parallel_map(run_single_replication, replication_tasks()):
+        replications_by_key[scenario_key].append(result)
     return {
-        key: mean_outputs([future.result() for future in scenario_futures])
-        for key, scenario_futures in futures.items()
+        key: {output: float(np.mean([result[output] for result in results])) for output in OUTPUT_KEYS}
+        for key, results in replications_by_key.items()
     }
 
 
 def build_rows(all_results):
-    rows = []
-    for scenario in SCENARIOS:
-        result = all_results[scenario.key]
-        passed = bool(scenario.check(result, all_results))
-        rows.append({
-            "scenario": scenario,
-            "result": result,
-            "passed": passed,
-        })
-    return rows
+    return [
+        {"scenario": scenario, "result": all_results[scenario.key],
+         "passed": bool(scenario.check(all_results[scenario.key], all_results))}
+        for scenario in SCENARIOS
+    ]
 
 
 def table_cells(row):
@@ -428,21 +545,16 @@ def table_cells(row):
         f"{result['accelerated_time_fraction']:.4f}",
         f"{result['mean_queue_length_1']:.3f}",
         f"{result['mean_queue_length_2']:.3f}",
+        f"{result['max_queue_length_1']:.1f}",
+        f"{result['max_queue_length_2']:.1f}",
+        f"{result['mean_waiting_time_1']:.3f}",
+        f"{result['mean_waiting_time_2']:.3f}",
         f"{result['utilization_1']:.4f}",
         f"{result['utilization_2']:.4f}",
         f"{result['mean_sojourn_time']:.3f}",
         scenario.expectation,
         "так" if row["passed"] else "ні",
     ]
-
-
-def save_table(rows):
-    RESULTS_DIRECTORY.mkdir(exist_ok=True)
-    with open(TABLE_FILE, "w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.writer(file)
-        writer.writerow(HEADER)
-        for row in rows:
-            writer.writerow(table_cells(row))
 
 
 def print_table(rows):
@@ -452,19 +564,17 @@ def print_table(rows):
     print(f"  стохастичні:   T_warm = {STOCHASTIC_WARMUP_MS:.0f} мс, T_mod = {STOCHASTIC_SIMULATION_MS:.0f} мс "
           "(якщо не вказано інакше)")
     print()
-    header = (f"{'Ключ':<30} {'T_warm':>7} {'T_mod':>8} {'P_зн':>7} {'зн/с':>8} {'підкл/с':>8} "
-              f"{'підкл':>6} {'R=1':>6} {'L1':>9} {'L2':>6} {'U1':>6} {'U2':>6} {'T, мс':>9}  Пройдено")
+    header = (f"{'Ключ':<36} {'T_warm':>7} {'T_mod':>8} {'P_зн':>7} {'підкл/с':>8} {'R=1':>6} "
+              f"{'L1':>9} {'maxL2':>6} {'U1':>6} {'T, мс':>9}  Пройдено")
     print(header)
     for row in rows:
         scenario = row["scenario"]
         result = row["result"]
-        print(f"{scenario.key:<30} {scenario.warmup_time:>7.0f} {scenario.simulation_time:>8.0f} "
-              f"{result['destroyed_fraction']:>7.4f} {result['destroyed_per_second']:>8.2f} "
-              f"{result['activations_per_second']:>8.3f} {result['activation_count']:>6.1f} "
+        print(f"{scenario.key:<36} {scenario.warmup_time:>7.0f} {scenario.simulation_time:>8.0f} "
+              f"{result['destroyed_fraction']:>7.4f} {result['activations_per_second']:>8.3f} "
               f"{result['accelerated_time_fraction']:>6.3f} {result['mean_queue_length_1']:>9.2f} "
-              f"{result['mean_queue_length_2']:>6.2f} {result['utilization_1']:>6.3f} "
-              f"{result['utilization_2']:>6.3f} {result['mean_sojourn_time']:>9.2f}  "
-              f"{'так' if row['passed'] else 'НІ'}")
+              f"{result['max_queue_length_2']:>6.1f} {result['utilization_1']:>6.3f} "
+              f"{result['mean_sojourn_time']:>9.2f}  {'так' if row['passed'] else 'НІ'}")
     passed_count = sum(1 for row in rows if row["passed"])
     print()
     print(f"Пройдено сценаріїв: {passed_count} із {len(rows)}")
@@ -482,13 +592,10 @@ def protocol_config(event_limit):
 
 def protocol_title(text):
     return (f"{text}\nБазовий B8: інтервал unif(3;9) мс, обслуговування 5/4 мс, поріг знищення 10 мс, N=100, θ=0.30, "
-            f"seed={PROTOCOL_SEED}, T_warm=0 мс, T_mod={PROTOCOL_SIMULATION_MS:.0f} мс\n\n")
-
-
-def write_text(path, text):
-    RESULTS_DIRECTORY.mkdir(exist_ok=True)
-    with open(path, "w", encoding="utf-8-sig") as file:
-        file.write(text)
+            f"seed={PROTOCOL_SEED}, T_warm=0 мс, T_mod={PROTOCOL_SIMULATION_MS:.0f} мс\n"
+            "Стан після події: t_next — момент наступної події елемента (∞ — подію не заплановано), "
+            "У вікні — знищених / пакетів у ковзному вікні.\n"
+            "Пріоритет одночасних подій: K2 → K1 → надходження.\n\n")
 
 
 def save_event_protocols():
@@ -521,16 +628,14 @@ def save_event_protocols():
 
 def main():
     started = time.perf_counter()
-    with ProcessPoolExecutor() as executor:
-        all_results = run_all_scenarios(executor)
-    rows = build_rows(all_results)
-    save_table(rows)
+    rows = build_rows(run_all_scenarios())
+    write_csv(TABLE_FILE, HEADER, [table_cells(row) for row in rows])
     print_table(rows)
     switch_step = save_event_protocols()
     print()
-    print(f"Таблиця: {TABLE_FILE}")
-    print(f"Протокол перших {PROTOCOL_EVENT_COUNT} подій: {PROTOCOL_FILE}")
-    print(f"Фрагмент першого перемикання (подія №{switch_step}): {SWITCH_PROTOCOL_FILE}")
+    print(f"Таблиця: {results_path(TABLE_FILE)}")
+    print(f"Протокол перших {PROTOCOL_EVENT_COUNT} подій: {results_path(PROTOCOL_FILE)}")
+    print(f"Фрагмент першого перемикання (подія №{switch_step}): {results_path(SWITCH_PROTOCOL_FILE)}")
     print(f"Час виконання: {time.perf_counter() - started:.1f} с")
 
 

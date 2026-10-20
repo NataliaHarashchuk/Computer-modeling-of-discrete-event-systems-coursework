@@ -1,3 +1,4 @@
+import math
 from dataclasses import asdict, dataclass, field
 
 from simulation.config import ModelConfig
@@ -14,6 +15,7 @@ PRIORITY_ARRIVAL = 2
 PRIORITY_SINK = 3
 
 MILLISECONDS_PER_SECOND = 1000.0
+EXIT_EVENT_LABEL = "кінець обслуговування, вихід"
 
 
 @dataclass
@@ -23,9 +25,14 @@ class ProtocolEntry:
     element_name: str
     event_label: str
     packet_id: int
+    next_event_times: tuple
     queue_lengths: tuple
     channel_busy: tuple
     resource_accelerated: bool
+    exited_packet_sojourn_time: float | None
+    exited_packet_destroyed: bool | None
+    window_destroyed: int | None
+    window_length: int | None
     resource_switch: str
 
 
@@ -91,6 +98,7 @@ class Model:
         self.channel_2.next_element = self.sink
         self.elements = [self.create, self.channel_1, self.channel_2, self.sink]
         self.processes = [self.channel_1, self.channel_2]
+        self.event_sources = [self.create, self.channel_1, self.channel_2]
         self.controller = self.build_controller()
         self.current_time = 0.0
         self.statistics_start_time = 0.0
@@ -208,15 +216,21 @@ class Model:
             resource_switch = "ресурс УВІМКНЕНО"
         elif accelerated_before and not accelerated_after:
             resource_switch = "ресурс ВИМКНЕНО"
+        packet_exited = element is self.channel_2
         self.protocol.append(ProtocolEntry(
             step=self.event_count,
             time=self.current_time,
             element_name=element.name,
-            event_label=element.event_label,
+            event_label=EXIT_EVENT_LABEL if packet_exited else element.event_label,
             packet_id=packet.id,
+            next_event_times=tuple(event_source.next_time for event_source in self.event_sources),
             queue_lengths=tuple(process.queue_length for process in self.processes),
             channel_busy=tuple(process.is_busy for process in self.processes),
             resource_accelerated=accelerated_after,
+            exited_packet_sojourn_time=packet.sojourn_time if packet_exited else None,
+            exited_packet_destroyed=packet.destroyed if packet_exited else None,
+            window_destroyed=self.controller.destroyed_in_window if self.controller else None,
+            window_length=len(self.controller.window) if self.controller else None,
             resource_switch=resource_switch,
         ))
 
@@ -280,18 +294,43 @@ class Model:
 
     def format_protocol(self):
         process_names = [process.name for process in self.processes]
-        queue_header = " ".join(f"Черга {name}" for name in process_names)
-        channel_header = " ".join(f"Канал {name}" for name in process_names)
-        header = (f"{'№':>4} {'Час, мс':>10} {'Елемент':<12} {'Подія':<22} {'Пакет':>6} "
-                  f"{queue_header:<16} {channel_header:<20} {'Ресурс':<8} Примітка")
+        next_time_headers = [f"t_next {source.name}" for source in self.event_sources]
+        columns = (
+            [("№", 5), ("Час, мс", 10), ("Елемент", -11), ("Подія", -28), ("Пакет", 5)]
+            + [(header, 18 if index == 0 else 10) for index, header in enumerate(next_time_headers)]
+            + [(f"Черга {name}", 8) for name in process_names]
+            + [(f"Канал {name}", 8) for name in process_names]
+            + [("Ресурс", 6), ("T пакета, мс", 12), ("Результат", -10), ("У вікні", 7), ("Примітка", 0)]
+        )
+        header = " ".join(format_protocol_cell(title, width) for title, width in columns)
         lines = [header, "-" * len(header)]
         for entry in self.protocol:
-            queues = " ".join(f"{length:>8}" for length in entry.queue_lengths)
-            channels = " ".join(f"{('зайнятий' if busy else 'вільний'):>8}" for busy in entry.channel_busy)
-            resource = "4 мс" if entry.resource_accelerated else "5 мс"
-            lines.append(f"{entry.step:>4} {entry.time:>10.4f} {entry.element_name:<12} {entry.event_label:<22} "
-                         f"{entry.packet_id:>6} {queues:<16} {channels:<20} {resource:<8} {entry.resource_switch}")
+            cells = [entry.step, f"{entry.time:.4f}", entry.element_name, entry.event_label, entry.packet_id]
+            cells += [format_event_time(next_time) for next_time in entry.next_event_times]
+            cells += list(entry.queue_lengths)
+            cells += ["зайнятий" if busy else "вільний" for busy in entry.channel_busy]
+            cells.append("4 мс" if entry.resource_accelerated else "5 мс")
+            cells.append("" if entry.exited_packet_sojourn_time is None else f"{entry.exited_packet_sojourn_time:.4f}")
+            cells.append(format_exit_result(entry.exited_packet_destroyed))
+            cells.append("" if entry.window_length is None else f"{entry.window_destroyed}/{entry.window_length}")
+            cells.append(entry.resource_switch)
+            lines.append(" ".join(format_protocol_cell(cell, width) for cell, (_, width) in zip(cells, columns)))
         return "\n".join(lines)
 
-    def print_protocol(self):
-        print(self.format_protocol())
+
+def format_protocol_cell(value, width):
+    if width > 0:
+        return f"{value:>{width}}"
+    if width < 0:
+        return f"{value:<{-width}}"
+    return str(value)
+
+
+def format_event_time(next_time):
+    return "∞" if math.isinf(next_time) else f"{next_time:.4f}"
+
+
+def format_exit_result(destroyed):
+    if destroyed is None:
+        return ""
+    return "знищено" if destroyed else "доставлено"

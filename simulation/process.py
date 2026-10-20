@@ -14,7 +14,6 @@ class Process(Element):
         self.queue = deque()
         self.current_packet = None
         self.started_services_count = 0
-        self.accelerated_services_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = 0
@@ -67,13 +66,10 @@ class Process(Element):
         record = packet.node_record(self.name)
         record.service_start_time = self.current_time
         self.waiting_time_sum += record.waiting_time
-        record.service_duration = duration
         record.accelerated = accelerated
         self.current_packet = packet
         self.next_time = self.current_time + duration
         self.started_services_count += 1
-        if accelerated:
-            self.accelerated_services_count += 1
 
     def update_statistics(self, delta):
         self.queue_length_integral += self.queue_length * delta
@@ -82,12 +78,7 @@ class Process(Element):
 
     def reset_statistics(self):
         self.started_services_count = 0
-        self.accelerated_services_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = self.queue_length
         self.waiting_time_sum = 0.0
-
-    def describe_state(self):
-        channel = "зайнятий" if self.is_busy else "вільний"
-        return f"{self.name}: черга {self.queue_length}, канал {channel}"
