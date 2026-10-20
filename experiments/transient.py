@@ -235,8 +235,7 @@ def main():
     analyses_by_scenario = analyse_scenarios()
     analyses = analyses_by_scenario["base"]
     limits = {scenario_key: scenario_limits(analyses_by_scenario[scenario_key]) for scenario_key, _, _ in SCENARIOS}
-    criterion_time = max(criterion for criterion, _ in limits.values())
-    detected_warmup = max(warmup for _, warmup in limits.values())
+    criterion_time, detected_warmup = limits["base"]
     warmup_time = round_up(max(detected_warmup, TRACE_INTERVAL_MS) * WARMUP_SAFETY_FACTOR, WARMUP_ROUNDING_MS)
     simulation_time = round_up(criterion_time, SIMULATION_TIME_ROUNDING_MS)
 
@@ -244,13 +243,15 @@ def main():
     for scenario_key, scenario_title, _ in SCENARIOS:
         for key, title, _ in RESPONSES:
             analysis = analyses_by_scenario[scenario_key][key]
-            rows.append([scenario_title] + response_row(title, analysis))
+            rows.append([scenario_title] + response_row(title, analysis)
+                        + ["так" if is_sufficient(analysis, warmup_time, simulation_time) else "ні"])
     write_csv(
         "transient.csv",
         ["Сценарій", "Відгук", "Сталий рівень", "Точність ε (5% рівня)", "T за критерієм (3.1), мс",
          f"Півширина вікна Велча w, інтервалів по {TRACE_INTERVAL_MS:.0f} мс",
          "Макс. відхилення згладженого ряду на другій половині горизонту",
-         "Кінець перехідного періоду (відхилення ≤ ε), мс", f"Розкид при t = {HORIZON_MS:.0f} мс"],
+         "Кінець перехідного періоду (відхилення ≤ ε), мс", f"Розкид при t = {HORIZON_MS:.0f} мс",
+         "Обраних T_warm і T_mod достатньо"],
         rows,
     )
 
@@ -278,6 +279,10 @@ def main():
                     "title": scenario_title,
                     "criterion_time_ms": limits[scenario_key][0],
                     "detected_warmup_ms": limits[scenario_key][1],
+                    "sufficient": {
+                        key: is_sufficient(analyses_by_scenario[scenario_key][key], warmup_time, simulation_time)
+                        for key, _, _ in RESPONSES
+                    },
                     "responses": {
                         key: {
                             "steady_level": analyses_by_scenario[scenario_key][key]["steady_level"],
@@ -304,6 +309,10 @@ def main():
     print(f"Перехідний період (виявлено): {detected_warmup:.0f} мс → T_warm = {warmup_time:.0f} мс")
     print(f"Критерій (3.1): T = {criterion_time:.0f} мс → T_mod = {simulation_time:.0f} мс")
     print(f"Час виконання: {time.time() - started:.1f} с")
+
+
+def is_sufficient(analysis, warmup_time, simulation_time):
+    return analysis["warmup_time"] <= warmup_time and analysis["criterion_time"] <= simulation_time
 
 
 def response_row(title, analysis):

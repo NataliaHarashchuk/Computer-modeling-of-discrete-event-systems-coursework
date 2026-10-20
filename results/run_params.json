@@ -9,30 +9,78 @@
     "detected_warmup_ms": 13000.0,
     "warmup_safety_factor": 2.0,
     "criterion_time_ms": 515000.0,
-    "responses": {
-      "destroyed_fraction": {
-        "steady_level": 0.2815650935414974,
-        "precision": 0.01407825467707487,
-        "criterion_time_ms": 10000.0,
-        "welch_half_window": 5,
-        "tail_max_deviation": 0.003366691516773823,
-        "warmup_time_ms": 3000.0
-      },
-      "activations_per_second": {
-        "steady_level": 7.26475,
-        "precision": 0.36323750000000005,
+    "scenarios": {
+      "base": {
+        "title": "Базовий B8, інтервал unif(3; 9) мс",
         "criterion_time_ms": 515000.0,
-        "welch_half_window": 50,
-        "tail_max_deviation": 0.24927351485148552,
-        "warmup_time_ms": 13000.0
+        "detected_warmup_ms": 13000.0,
+        "sufficient": {
+          "destroyed_fraction": true,
+          "activations_per_second": true,
+          "accelerated_time_fraction": true
+        },
+        "responses": {
+          "destroyed_fraction": {
+            "steady_level": 0.2815650935414974,
+            "precision": 0.01407825467707487,
+            "criterion_time_ms": 10000.0,
+            "welch_half_window": 5,
+            "tail_max_deviation": 0.003366691516773823,
+            "warmup_time_ms": 3000.0
+          },
+          "activations_per_second": {
+            "steady_level": 7.26475,
+            "precision": 0.36323750000000005,
+            "criterion_time_ms": 515000.0,
+            "welch_half_window": 50,
+            "tail_max_deviation": 0.24927351485148552,
+            "warmup_time_ms": 13000.0
+          },
+          "accelerated_time_fraction": {
+            "steady_level": 0.3112100620505388,
+            "precision": 0.015560503102526942,
+            "criterion_time_ms": 302000.0,
+            "welch_half_window": 20,
+            "tail_max_deviation": 0.015324026626210296,
+            "warmup_time_ms": 3000.0
+          }
+        }
       },
-      "accelerated_time_fraction": {
-        "steady_level": 0.3112100620505388,
-        "precision": 0.015560503102526942,
-        "criterion_time_ms": 302000.0,
-        "welch_half_window": 20,
-        "tail_max_deviation": 0.015324026626210296,
-        "warmup_time_ms": 3000.0
+      "high_load": {
+        "title": "Найбільше навантаження, інтервал unif(2; 8) мс",
+        "criterion_time_ms": 1865000.0,
+        "detected_warmup_ms": 166000.0,
+        "sufficient": {
+          "destroyed_fraction": true,
+          "activations_per_second": false,
+          "accelerated_time_fraction": true
+        },
+        "responses": {
+          "destroyed_fraction": {
+            "steady_level": 0.3338461292448723,
+            "precision": 0.016692306462243615,
+            "criterion_time_ms": 23000.0,
+            "welch_half_window": 5,
+            "tail_max_deviation": 0.009551921508686834,
+            "warmup_time_ms": 3000.0
+          },
+          "activations_per_second": {
+            "steady_level": 4.219375,
+            "precision": 0.21096875000000004,
+            "criterion_time_ms": 1865000.0,
+            "welch_half_window": 50,
+            "tail_max_deviation": 0.191746287128713,
+            "warmup_time_ms": 166000.0
+          },
+          "accelerated_time_fraction": {
+            "steady_level": 0.7343976788969604,
+            "precision": 0.03671988394484802,
+            "criterion_time_ms": 13000.0,
+            "welch_half_window": 5,
+            "tail_max_deviation": 0.019296050592614633,
+            "warmup_time_ms": 2000.0
+          }
+        }
       }
     }
   },

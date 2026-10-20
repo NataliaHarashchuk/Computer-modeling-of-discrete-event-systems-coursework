@@ -100,10 +100,10 @@ def plot_sensitivity(samples, params):
         axis.grid(axis="x", visible=False)
         label_axes(axis, title, "Режим керування", y_label)
         use_percent_axis(axis)
-        axis.set_ylim(0, 1.15)
+        axis.set_ylim(0, 1.45)
         if key == "destroyed_fraction":
             add_horizontal_reference(axis, DESTRUCTION_REQUIREMENT, "Вимога: 30%")
-        add_legend(axis, "upper right")
+        add_legend(axis, "upper left")
     figure.tight_layout()
     return save_figure(figure, "sensitivity_service_law.png")
 
