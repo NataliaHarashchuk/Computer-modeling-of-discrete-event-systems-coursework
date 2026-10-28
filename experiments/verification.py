@@ -342,7 +342,11 @@ def check_threshold_edge_below(result, all_results):
 
 
 def check_threshold_within_tolerance(result, all_results):
-    return result["destroyed_fraction"] == 0.0
+    return (
+        result["exited"] > 0
+        and result["destroyed_fraction"] == 0.0
+        and is_close(result["mean_sojourn_time"], 10.0)
+    )
 
 
 def check_threshold_beyond_tolerance(result, all_results):
@@ -699,8 +703,8 @@ def table_cells(row):
     return [
         scenario.label,
         scenario.changed_inputs,
-        f"{scenario.warmup_time:g}",
-        f"{scenario.simulation_time:g}",
+        f"{scenario.warmup_time:.10g}",
+        f"{scenario.simulation_time:.10g}",
         scenario.replications,
         f"{result['destroyed_fraction']:.4f}",
         f"{result['destroyed_per_second']:.3f}",
@@ -737,7 +741,7 @@ def print_table(rows):
     for row in rows:
         scenario = row["scenario"]
         result = row["result"]
-        print(f"{scenario.key:<36} {scenario.warmup_time:>7g} {scenario.simulation_time:>8g} "
+        print(f"{scenario.key:<36} {scenario.warmup_time:>7.10g} {scenario.simulation_time:>8.10g} "
               f"{result['destroyed_fraction']:>7.4f} {result['activations_per_second']:>8.3f} "
               f"{result['accelerated_time_fraction']:>6.3f} {result['mean_queue_length_1']:>9.2f} "
               f"{result['max_queue_length_2']:>6.1f} {result['utilization_1']:>6.3f} "
