@@ -29,6 +29,8 @@ ABSOLUTE_TOLERANCE = 1e-6
 UTILIZATION_TOLERANCE = 5e-3
 LITTLE_LAW_RELATIVE_TOLERANCE = 1e-3
 DESTRUCTION_REQUIREMENT = 0.30
+LIMIT_VIOLATION_NEGLIGIBLE = 1e-3
+LIMIT_VIOLATION_DOMINANT = 0.9
 
 HEADER = [
     "Сценарій",
@@ -42,6 +44,8 @@ HEADER = [
     "Підключень, шт",
     "Відключень, шт",
     "Частка часу R=1",
+    "Частка часу з рівнем знищення >30% у вікні",
+    "Макс. частка знищених у вікні",
     "L1, пакетів",
     "L2, пакетів",
     "max L1, пакетів",
@@ -62,6 +66,9 @@ OUTPUT_KEYS = [
     "activation_count",
     "deactivation_count",
     "accelerated_time_fraction",
+    "limit_violation_time_fraction",
+    "limit_violation_exits_fraction",
+    "max_window_destroyed_fraction",
     "mean_queue_length_1",
     "mean_queue_length_2",
     "max_queue_length_1",
@@ -134,6 +141,8 @@ def check_dd1_baseline(result, all_results):
         and result["max_queue_length_1"] == 0
         and result["max_queue_length_2"] == 0
         and result["activation_count"] == 0
+        and result["limit_violation_time_fraction"] == 0.0
+        and result["max_window_destroyed_fraction"] == 0.0
     )
 
 
@@ -227,6 +236,7 @@ def check_mode_always(result, all_results):
     return (
         result["activation_count"] == 0
         and result["accelerated_time_fraction"] == 1.0
+        and result["limit_violation_time_fraction"] < LIMIT_VIOLATION_NEGLIGIBLE
         and is_close(result["utilization_1"], 4.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
         and is_close(result["utilization_2"], 4.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
     )
@@ -236,6 +246,7 @@ def check_mode_never(result, all_results):
     return (
         result["activation_count"] == 0
         and result["accelerated_time_fraction"] == 0.0
+        and result["limit_violation_time_fraction"] > LIMIT_VIOLATION_DOMINANT
         and is_close(result["utilization_1"], 5.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
         and is_close(result["utilization_2"], 5.0 / 6.0, 2 * UTILIZATION_TOLERANCE)
     )
@@ -250,12 +261,16 @@ def check_channel_2_queue_never_forms(result, all_results):
     )
 
 
-def check_little_law(result, all_results):
+def satisfies_little_law(result):
     arrival_rate_per_ms = result["throughput_per_second"] / MILLISECONDS_PER_SECOND
     little_queue_length = arrival_rate_per_ms * result["mean_waiting_time_1"]
     return abs(result["mean_queue_length_1"] - little_queue_length) <= (
         LITTLE_LAW_RELATIVE_TOLERANCE * result["mean_queue_length_1"]
     )
+
+
+def check_little_law(result, all_results):
+    return satisfies_little_law(result)
 
 
 def check_flow_conservation(result, all_results):
@@ -292,7 +307,8 @@ def check_early_discard_deterministic(result, all_results):
         is_close(result["destroyed_fraction"], 0.5, 1e-3)
         and result["discarded"] == result["destroyed"]
         and is_close(result["mean_sojourn_time"], 10.0)
-        and result["mean_waiting_time_1"] == 0.0
+        and is_close(result["mean_waiting_time_1"], 0.5, 1e-3)
+        and satisfies_little_law(result)
         and result["max_queue_length_1"] <= 1
     )
 
@@ -302,7 +318,7 @@ def check_early_discard_never(result, all_results):
         result["destroyed_fraction"] < all_results["mode_never"]["destroyed_fraction"]
         and result["discarded"] == result["destroyed"]
         and is_close(result["mean_sojourn_time"], 10.0)
-        and result["mean_waiting_time_1"] == 0.0
+        and satisfies_little_law(result)
     )
 
 
@@ -319,7 +335,11 @@ def check_threshold_edge_inclusive(result, all_results):
 
 
 def check_threshold_edge_below(result, all_results):
-    return result["destroyed_fraction"] == 1.0
+    return (
+        result["destroyed_fraction"] == 1.0
+        and result["limit_violation_exits_fraction"] == 1.0
+        and result["max_window_destroyed_fraction"] == 1.0
+    )
 
 
 SCENARIOS = [
@@ -328,7 +348,7 @@ SCENARIOS = [
         "D/D/1: інтервал 6 мс, обслуговування 5 мс, керування вимкнене",
         "arrival=constant 6; control=never",
         constant_arrivals(6.0, control_mode="never"),
-        "T=10 мс, знищень 0, U=5/6, черги не утворюються",
+        "T=10 мс, знищень 0, U=5/6, черги не утворюються, рівень знищення у вікні 0",
         check_dd1_baseline,
     ),
     VerificationScenario(
@@ -352,7 +372,7 @@ SCENARIOS = [
         "D/D/1: поріг знищення 9.9 мс < T=10 мс",
         "arrival=constant 6; control=never; поріг знищення=9.9",
         constant_arrivals(6.0, control_mode="never", destruction_threshold=9.9),
-        "Кожен пакет має T=10>9.9: P_зн=1",
+        "Кожен пакет має T=10>9.9: P_зн=1, кожне вікно 100/100 перевищує 30%",
         check_threshold_edge_below,
     ),
     VerificationScenario(
@@ -445,7 +465,7 @@ SCENARIOS = [
         "Базовий B8: ресурс завжди ввімкнений (4 мс)",
         "control=always",
         {"control_mode": "always"},
-        "Підключень 0, частка часу R=1 дорівнює 1, U≈4/6",
+        "Підключень 0, частка часу R=1 дорівнює 1, U≈4/6, рівень >30% у вікні практично не буває (<0.1% часу)",
         check_mode_always,
         deterministic=False,
     ),
@@ -454,7 +474,7 @@ SCENARIOS = [
         "Базовий B8: ресурс вимкнений (5 мс)",
         "control=never",
         {"control_mode": "never"},
-        "Підключень 0, частка часу R=1 дорівнює 0, U≈5/6",
+        "Підключень 0, частка часу R=1 дорівнює 0, U≈5/6, рівень у вікні >30% понад 90% часу",
         check_mode_never,
         deterministic=False,
     ),
@@ -529,7 +549,7 @@ SCENARIOS += [
         "Раннє відкидання: інтервал 4 мс, без ресурсу — відкидається кожен другий пакет",
         "arrival=constant 4; control=never; early_discard",
         constant_arrivals(4.0, control_mode="never", early_discard=True),
-        "P_зн = 0.5; усі знищені відкинуто до K1; доставлені мають T = 10 мс без очікування",
+        "P_зн = 0.5; усі знищені відкинуто до K1; доставлені мають T = 10 мс; відкинуті чекали 1 мс: W1 = 0.5 мс, L1 = λ·W1",
         check_early_discard_deterministic,
     ),
     VerificationScenario(
@@ -537,7 +557,7 @@ SCENARIOS += [
         "Раннє відкидання в базовому B8 без ресурсу",
         "control=never; early_discard",
         {"control_mode": "never", "early_discard": True},
-        "P_зн менше, ніж у never; усі знищені відкинуто, доставлені мають T = 10 мс",
+        "P_зн менше, ніж у never; усі знищені відкинуто, доставлені мають T = 10 мс; L1 = λ·W1 з урахуванням очікування відкинутих",
         check_early_discard_never,
         deterministic=False,
     ),
@@ -601,6 +621,8 @@ def table_cells(row):
         f"{result['activation_count']:.1f}",
         f"{result['deactivation_count']:.1f}",
         f"{result['accelerated_time_fraction']:.4f}",
+        f"{result['limit_violation_time_fraction']:.4f}",
+        f"{result['max_window_destroyed_fraction']:.2f}",
         f"{result['mean_queue_length_1']:.3f}",
         f"{result['mean_queue_length_2']:.3f}",
         f"{result['max_queue_length_1']:.1f}",

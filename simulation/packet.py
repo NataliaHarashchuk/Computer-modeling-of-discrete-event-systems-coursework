@@ -5,14 +5,15 @@ from dataclasses import dataclass, field
 class NodeRecord:
     node_name: str
     arrival_time: float
+    queue_exit_time: float | None = None
     service_start_time: float | None = None
     accelerated: bool | None = None
 
     @property
     def waiting_time(self):
-        if self.service_start_time is None:
+        if self.queue_exit_time is None:
             return None
-        return self.service_start_time - self.arrival_time
+        return self.queue_exit_time - self.arrival_time
 
 
 @dataclass

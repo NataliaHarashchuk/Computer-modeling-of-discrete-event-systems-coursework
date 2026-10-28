@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from simulation.config import ModelConfig
 from simulation.controller import ResourceController
 from simulation.create import Create
+from simulation.destruction_limit_monitor import DestructionLimitMonitor
 from simulation.early_discard import EarlyDiscard
 from simulation.fun_rand import FunRand
 from simulation.model import Model
@@ -69,6 +70,9 @@ class SimulationResults:
     activations_per_second: float
     accelerated_time_fraction: float
     accelerated_packets_fraction: float
+    limit_violation_time_fraction: float
+    limit_violation_exits_fraction: float
+    max_window_destroyed_fraction: float
     mean_queue_length_1: float
     mean_queue_length_2: float
     max_queue_length_1: int
@@ -112,6 +116,9 @@ class TransmissionModel:
         self.controller = self.build_controller()
         if self.controller is not None:
             self.sink.add_exit_listener(self.controller.on_packet_exit)
+        self.limit_monitor = DestructionLimitMonitor(config.destruction_limit_window_size, config.destruction_limit)
+        self.sink.add_exit_listener(self.limit_monitor.on_packet_exit)
+        self.model.add_statistics_collector(self.limit_monitor)
         self.trace = []
         self.protocol = []
         self.accelerated_before_event = self.resource_state.accelerated
@@ -185,7 +192,7 @@ class TransmissionModel:
             resource_accelerated=accelerated_after,
             exited_packet_sojourn_time=packet.sojourn_time if packet_exited else None,
             exited_packet_destroyed=packet.destroyed if packet_exited else None,
-            window_destroyed=self.controller.destroyed_in_window if self.controller else None,
+            window_destroyed=self.controller.window.destroyed_count if self.controller else None,
             window_length=len(self.controller.window) if self.controller else None,
             resource_switch=resource_switch,
         ))
@@ -229,6 +236,9 @@ class TransmissionModel:
             activations_per_second=activation_count / observation_time * MILLISECONDS_PER_SECOND,
             accelerated_time_fraction=self.resource_state.accelerated_time / observation_time,
             accelerated_packets_fraction=self.sink.accelerated_packets_count / exited if exited else 0.0,
+            limit_violation_time_fraction=self.limit_monitor.violation_time / observation_time,
+            limit_violation_exits_fraction=self.limit_monitor.violating_exits_fraction,
+            max_window_destroyed_fraction=self.limit_monitor.max_destroyed_fraction,
             mean_queue_length_1=self.channel_1.mean_queue_length(observation_time),
             mean_queue_length_2=self.channel_2.mean_queue_length(observation_time),
             max_queue_length_1=self.channel_1.max_queue_length,

@@ -17,6 +17,8 @@ class ModelConfig:
     service_distribution: str = "constant"
     destruction_threshold: float = 10.0
     time_tolerance: float = 1e-9
+    destruction_limit: float = 0.30
+    destruction_limit_window_size: int = 100
     window_size: int = 100
     activation_threshold: float = 0.30
     deactivation_threshold: float | None = None
@@ -42,8 +44,10 @@ class ModelConfig:
             raise ValueError("mean times must be positive")
         if self.arrival_distribution == "uniform" and not math.isclose(self.arrival_mean, self.arrival_center):
             raise ValueError("for uniform arrivals arrival_mean must equal (arrival_min + arrival_max) / 2")
-        if self.window_size < 1:
-            raise ValueError("window_size must be at least 1")
+        if self.window_size < 1 or self.destruction_limit_window_size < 1:
+            raise ValueError("window sizes must be at least 1")
+        if not 0.0 <= self.destruction_limit <= 1.0:
+            raise ValueError("destruction_limit must be within [0; 1]")
         if self.activation_threshold < 0.0:
             raise ValueError("activation_threshold must be non-negative")
         if self.effective_deactivation_threshold < 0.0:

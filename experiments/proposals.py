@@ -38,6 +38,8 @@ RESPONSE_KEYS = (
     "activations_per_second",
     "accelerated_time_fraction",
     "accelerated_packets_fraction",
+    "limit_violation_time_fraction",
+    "max_window_destroyed_fraction",
     "mean_sojourn_time",
 )
 HYSTERESIS_OFF_THRESHOLDS = [round(0.30 - 0.025 * step, 3) for step in range(9)]
@@ -98,6 +100,7 @@ def comparison_row(label, samples, baseline):
     destroyed = samples["destroyed_fraction"]
     activations = samples["activations_per_second"]
     accelerated = samples["accelerated_time_fraction"]
+    violation = samples["limit_violation_time_fraction"]
     return [
         label,
         round(destroyed.mean() * 100, 3),
@@ -108,6 +111,9 @@ def comparison_row(label, samples, baseline):
         round(accelerated.mean() * 100, 3),
         round(confidence_half_width(accelerated) * 100, 3),
         round(samples["accelerated_packets_fraction"].mean() * 100, 3),
+        round(violation.mean() * 100, 3),
+        round(confidence_half_width(violation) * 100, 3),
+        round(samples["max_window_destroyed_fraction"].mean() * 100, 2),
         round(samples["mean_sojourn_time"].mean(), 3),
         round(relative_change_percent(destroyed, baseline["destroyed_fraction"]), 2),
         round(relative_change_percent(activations, baseline["activations_per_second"]), 2),
@@ -129,6 +135,9 @@ COMPARISON_HEADER = [
     "Частка часу R=1, %",
     "Частка часу R=1 ДІ ±, %",
     "Частка пакетів з прискоренням, %",
+    "Частка часу з рівнем знищення >30% у вікні 100 пакетів, %",
+    "Частка часу з рівнем >30% ДІ ±, %",
+    "Найбільша частка знищених у вікні (середнє за прогонами), %",
     "Середній час перебування, мс",
     "Зміна P_зн відносно базового, %",
     "Зміна підключень/с відносно базового, %",
@@ -169,7 +178,7 @@ def plot_horizontal_bars(axis, labels, samples_list, key, scale, x_label, title,
 
 def plot_comparison(labels, samples_list, params):
     caption = simulation_caption_for(params, "спільні випадкові числа для всіх варіантів")
-    figure, axes = create_figure(caption, rows=1, columns=3, width=15.5, height=6.0)
+    figure, axes = create_figure(caption, rows=1, columns=4, width=20.0, height=6.0)
     plot_horizontal_bars(
         axes[0], labels, samples_list, "destroyed_fraction", 100.0,
         "Частка знищених пакетів P_зн, %", "Частка знищених пакетів",
@@ -182,6 +191,10 @@ def plot_comparison(labels, samples_list, params):
     plot_horizontal_bars(
         axes[2], labels, samples_list, "accelerated_time_fraction", 100.0,
         "Частка часу з R=1, %", "Частка часу з підключеним ресурсом", decimals=1,
+    )
+    plot_horizontal_bars(
+        axes[3], labels, samples_list, "limit_violation_time_fraction", 100.0,
+        "Частка часу, %", "Рівень знищення у вікні 100 пакетів > 30%", decimals=1,
     )
     for axis in axes[1:]:
         axis.set_yticklabels([])
@@ -208,11 +221,13 @@ def hysteresis_rows(sweep_samples):
         destroyed = samples["destroyed_fraction"]
         activations = samples["activations_per_second"]
         accelerated = samples["accelerated_time_fraction"]
+        violation = samples["limit_violation_time_fraction"]
         rows.append([
             round(off_threshold * 100, 1),
             round(destroyed.mean() * 100, 3), round(confidence_half_width(destroyed) * 100, 3),
             round(activations.mean(), 3), round(confidence_half_width(activations), 3),
             round(accelerated.mean() * 100, 3), round(confidence_half_width(accelerated) * 100, 3),
+            round(violation.mean() * 100, 3), round(confidence_half_width(violation) * 100, 3),
             "так" if meets_requirement(destroyed) else "ні",
         ])
     return rows
@@ -365,7 +380,8 @@ def main():
     write_csv(
         "proposal_hysteresis.csv",
         ["θ_off, %", "P_зн, %", "P_зн ДІ ±, %", "Підключень/с", "Підключень/с ДІ ±",
-         "Частка часу R=1, %", "Частка часу R=1 ДІ ±, %", "Виконується P_зн ≤ 30%"],
+         "Частка часу R=1, %", "Частка часу R=1 ДІ ±, %",
+         "Частка часу з рівнем >30% у вікні, %", "Частка часу з рівнем >30% ДІ ±, %", "Виконується P_зн ≤ 30%"],
         hysteresis_rows(sweep_samples),
     )
     plot_hysteresis(sweep_samples, params)
