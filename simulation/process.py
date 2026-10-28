@@ -15,8 +15,6 @@ class Process(Element):
         self.early_discard = early_discard
         self.queue = deque()
         self.current_packet = None
-        self.started_services_count = 0
-        self.discarded_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = 0
@@ -79,14 +77,11 @@ class Process(Element):
         record = packet.node_record(self.name)
         self.leave_queue(record)
         if self.early_discard is not None and self.early_discard.is_doomed(packet, self.current_time, duration):
-            self.discarded_count += 1
             self.early_discard.discard(packet)
             return
-        record.service_start_time = self.current_time
         record.accelerated = accelerated
         self.current_packet = packet
         self.next_time = self.current_time + duration
-        self.started_services_count += 1
 
     def leave_queue(self, record):
         record.queue_exit_time = self.current_time
@@ -99,8 +94,6 @@ class Process(Element):
             self.busy_time += delta
 
     def reset_statistics(self):
-        self.started_services_count = 0
-        self.discarded_count = 0
         self.queue_length_integral = 0.0
         self.busy_time = 0.0
         self.max_queue_length = self.queue_length

@@ -1,3 +1,4 @@
+import math
 import time
 
 import numpy as np
@@ -201,7 +202,10 @@ def plot_sojourn_histogram(sojourn_by_mode, params, tolerance):
                                  f"T = 10 мс рівно — доставлені пакети")
     figure, axes = create_figure(caption, rows=1, columns=2, width=11.0, height=4.8, sharex=True)
     upper_edge = max(samples.max() for samples, _ in sojourn_by_mode.values())
-    edges = np.arange(HISTOGRAM_LOWER_EDGE_MS, upper_edge + 2 * HISTOGRAM_BIN_WIDTH_MS, HISTOGRAM_BIN_WIDTH_MS)
+    shortest_sojourn = min(samples.min() for samples, _ in sojourn_by_mode.values())
+    lower_edge = min(HISTOGRAM_LOWER_EDGE_MS,
+                     math.floor((shortest_sojourn - tolerance) / HISTOGRAM_BIN_WIDTH_MS) * HISTOGRAM_BIN_WIDTH_MS)
+    edges = np.arange(lower_edge, upper_edge + 2 * HISTOGRAM_BIN_WIDTH_MS, HISTOGRAM_BIN_WIDTH_MS)
     shares = {mode: right_closed_bin_shares(samples, edges, tolerance) for mode, (samples, _) in sojourn_by_mode.items()}
     y_limit = max(share.max() for share in shares.values()) * 1.15
     destroyed_bins = edges[:-1] >= DESTRUCTION_THRESHOLD_MS

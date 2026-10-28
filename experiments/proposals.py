@@ -8,6 +8,7 @@ from experiments.common import (
     base_config_from_run_params,
     confidence_half_width,
     format_p_value,
+    meets_destruction_requirement,
     load_run_params,
     run_replications,
     write_csv,
@@ -93,10 +94,6 @@ def paired_p_value(samples, baseline_samples):
     return float(stats.ttest_rel(samples, baseline_samples).pvalue)
 
 
-def meets_requirement(samples):
-    return samples.mean() + confidence_half_width(samples) <= DESTRUCTION_REQUIREMENT
-
-
 def comparison_row(label, samples, baseline):
     destroyed = samples["destroyed_fraction"]
     activations = samples["activations_per_second"]
@@ -122,7 +119,7 @@ def comparison_row(label, samples, baseline):
         format_p_value(paired_p_value(destroyed, baseline["destroyed_fraction"])),
         format_p_value(paired_p_value(activations, baseline["activations_per_second"])),
         format_p_value(paired_p_value(accelerated, baseline["accelerated_time_fraction"])),
-        "так" if meets_requirement(destroyed) else "ні",
+        "так" if meets_destruction_requirement(destroyed) else "ні",
     ]
 
 
@@ -163,7 +160,7 @@ def plot_horizontal_bars(axis, labels, samples_list, key, scale, x_label, title,
     axis.set_yticks(positions, labels)
     axis.invert_yaxis()
     axis.grid(axis="y", visible=False)
-    label_axes(axis, title, x_label, "")
+    label_axes(axis, title, x_label, "Варіант керування")
     upper = max(mean + half for mean, half in zip(means, halves))
     axis.set_xlim(0, upper * headroom)
     for position, mean, half in zip(positions, means, halves):
@@ -229,7 +226,7 @@ def hysteresis_rows(sweep_samples):
             round(activations.mean(), 3), round(confidence_half_width(activations), 3),
             round(accelerated.mean() * 100, 3), round(confidence_half_width(accelerated) * 100, 3),
             round(violation.mean() * 100, 3), round(confidence_half_width(violation) * 100, 3),
-            "так" if meets_requirement(destroyed) else "ні",
+            "так" if meets_destruction_requirement(destroyed) else "ні",
         ])
     return rows
 
@@ -266,7 +263,7 @@ def dominates(first, second):
 
 
 def pareto_indices(samples_list):
-    feasible = [index for index, samples in enumerate(samples_list) if meets_requirement(samples["destroyed_fraction"])]
+    feasible = [index for index, samples in enumerate(samples_list) if meets_destruction_requirement(samples["destroyed_fraction"])]
     costs = {index: resource_costs(samples_list[index]) for index in feasible}
     return [
         index for index in feasible
@@ -333,7 +330,7 @@ def two_factor_means_rows(samples_by_cell):
         row = [round(off_threshold * 100, 1), window_size]
         for key, _, scale, _ in TWO_FACTOR_RESPONSES:
             row.extend([round(samples[key].mean() * scale, 4), round(confidence_half_width(samples[key]) * scale, 4)])
-        row.append("так" if meets_requirement(samples["destroyed_fraction"]) else "ні")
+        row.append("так" if meets_destruction_requirement(samples["destroyed_fraction"]) else "ні")
         rows.append(row)
     return rows
 

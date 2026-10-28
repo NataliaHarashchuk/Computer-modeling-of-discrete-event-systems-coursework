@@ -5,6 +5,7 @@ import numpy as np
 from scipy import stats
 
 from experiments.common import (
+    DESTRUCTION_REQUIREMENT,
     base_config_from_run_params,
     load_run_params,
     run_replications,
@@ -25,7 +26,6 @@ from experiments.plotting import (
     use_percent_axis,
 )
 
-REQUIREMENT_DESTROYED_FRACTION = 0.30
 MAX_POLYNOMIAL_DEGREE = 4
 SIGNIFICANCE_LEVEL = 0.05
 MIN_CORRELATION_INDEX = 0.7
@@ -299,7 +299,7 @@ def run_interval_factor(params, replications):
         label_axes(axis, RESPONSE_LABELS[key], INTERVAL_FACTOR_LABEL, RESPONSE_AXIS_LABELS[key])
         apply_fraction_axis(axis, key)
         if key == "destroyed_fraction":
-            add_horizontal_reference(axis, REQUIREMENT_DESTROYED_FRACTION, "Вимога: 30%")
+            add_horizontal_reference(axis, DESTRUCTION_REQUIREMENT, "Вимога: 30%")
             add_legend(axis, "upper right")
     figure.tight_layout()
     save_figure(figure, "factor_interval.png")
@@ -356,7 +356,7 @@ def run_threshold_factor(params, replications):
         apply_fraction_axis(axis, key)
     destroyed_axis = axes[0]
     plot_line(destroyed_axis, THRESHOLDS, THRESHOLDS, "y = θ", 1, markers=False, linewidth=1.4)
-    add_horizontal_reference(destroyed_axis, REQUIREMENT_DESTROYED_FRACTION, "Вимога 0.30")
+    add_horizontal_reference(destroyed_axis, DESTRUCTION_REQUIREMENT, "Вимога 0.30")
     add_legend(destroyed_axis, "upper left")
     figure.tight_layout()
     save_figure(figure, "factor_threshold.png")

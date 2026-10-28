@@ -6,6 +6,7 @@ from experiments.common import (
     DESTRUCTION_REQUIREMENT,
     MODE_LABELS,
     base_config_from_run_params,
+    meets_destruction_requirement,
     confidence_half_width,
     load_run_params,
     run_replications,
@@ -60,9 +61,7 @@ def build_rows(samples):
             for key, _, _ in RESPONSES:
                 values = samples[(law, mode)][key]
                 row.extend([float(values.mean()), confidence_half_width(values)])
-            row.append("так" if samples[(law, mode)]["destroyed_fraction"].mean()
-                       + confidence_half_width(samples[(law, mode)]["destroyed_fraction"])
-                       <= DESTRUCTION_REQUIREMENT else "ні")
+            row.append("так" if meets_destruction_requirement(samples[(law, mode)]["destroyed_fraction"]) else "ні")
             rows.append(row)
     return rows
 
@@ -77,7 +76,8 @@ def header():
 def plot_sensitivity(samples, params):
     caption = simulation_caption(
         params["simulation_time_ms"], params["warmup_time_ms"], params["replications"],
-        "стовпчики: середнє та 95% ДІ; незалежні потоки випадкових чисел",
+        "стовпчики: середнє та 95% ДІ; незалежні потоки випадкових чисел для режимів керування, "
+        "спільні для двох законів обслуговування",
     )
     figure, axes = create_figure(caption, rows=1, columns=2, width=12.0, height=4.8)
     positions = np.arange(len(CONTROL_MODES))

@@ -236,6 +236,9 @@ def main():
     analyses = analyses_by_scenario["base"]
     limits = {scenario_key: scenario_limits(analyses_by_scenario[scenario_key]) for scenario_key, _, _ in SCENARIOS}
     criterion_time, detected_warmup = limits["base"]
+    if math.isinf(criterion_time) or math.isinf(detected_warmup):
+        raise RuntimeError("Базовий сценарій не досяг сталого режиму на пробному горизонті: "
+                           "збільште горизонт пробних прогонів або оберіть інший відгук (посібник, с. 80)")
     warmup_time = round_up(max(detected_warmup, TRACE_INTERVAL_MS) * WARMUP_SAFETY_FACTOR, WARMUP_ROUNDING_MS)
     simulation_time = round_up(criterion_time, SIMULATION_TIME_ROUNDING_MS)
 

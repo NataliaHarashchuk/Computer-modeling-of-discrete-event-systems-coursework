@@ -23,6 +23,11 @@ MODE_LABELS = {
 }
 
 
+def meets_destruction_requirement(destroyed_fraction_samples):
+    upper_bound = destroyed_fraction_samples.mean() + confidence_half_width(destroyed_fraction_samples)
+    return upper_bound <= DESTRUCTION_REQUIREMENT
+
+
 def format_p_value(p_value):
     if p_value < SMALLEST_REPORTED_P_VALUE:
         return f"< {SMALLEST_REPORTED_P_VALUE:g}"
