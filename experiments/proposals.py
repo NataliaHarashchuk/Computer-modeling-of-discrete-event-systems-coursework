@@ -4,8 +4,10 @@ import numpy as np
 from scipy import stats
 
 from experiments.common import (
+    DESTRUCTION_REQUIREMENT,
     base_config_from_run_params,
     confidence_half_width,
+    format_p_value,
     load_run_params,
     run_replications,
     write_csv,
@@ -22,7 +24,6 @@ from experiments.plotting import (
     simulation_caption,
 )
 
-DESTRUCTION_LIMIT = 0.30
 SIGNIFICANCE_LEVEL = 0.05
 TWO_FACTOR_OFF_THRESHOLDS = (0.10, 0.20, 0.30)
 TWO_FACTOR_WINDOW_SIZES = (50, 100, 300)
@@ -93,7 +94,7 @@ def paired_p_value(samples, baseline_samples):
 
 
 def meets_requirement(samples):
-    return samples.mean() + confidence_half_width(samples) <= DESTRUCTION_LIMIT
+    return samples.mean() + confidence_half_width(samples) <= DESTRUCTION_REQUIREMENT
 
 
 def comparison_row(label, samples, baseline):
@@ -182,7 +183,7 @@ def plot_comparison(labels, samples_list, params):
     plot_horizontal_bars(
         axes[0], labels, samples_list, "destroyed_fraction", 100.0,
         "Частка знищених пакетів P_зн, %", "Частка знищених пакетів",
-        reference=(DESTRUCTION_LIMIT * 100, "допустимо 30%"), decimals=2,
+        reference=(DESTRUCTION_REQUIREMENT * 100, "допустимо 30%"), decimals=2,
     )
     plot_horizontal_bars(
         axes[1], labels, samples_list, "activations_per_second", 1.0,
@@ -250,7 +251,7 @@ def plot_hysteresis(sweep_samples, params):
         label_axes(axis, title, x_label, y_label)
         axis.invert_xaxis()
         if key == "destroyed_fraction":
-            add_horizontal_reference(axis, DESTRUCTION_LIMIT * 100, "допустимо 30%")
+            add_horizontal_reference(axis, DESTRUCTION_REQUIREMENT * 100, "допустимо 30%")
         add_legend(axis, "best" if key != "destroyed_fraction" else "lower left")
     figure.tight_layout()
     return save_figure(figure, "proposal_hysteresis.png")
@@ -320,7 +321,7 @@ def two_way_anova(samples_by_cell, key):
         effect_share = sum_squares[source_key] / sum_squares_total
         partial_effect_share = sum_squares[source_key] / (sum_squares[source_key] + sum_squares_error)
         rows.append([source_name, sum_squares[source_key], degrees[source_key], mean_square, f_value, f_critical,
-                     p_value, effect_share, partial_effect_share,
+                     format_p_value(p_value), effect_share, partial_effect_share,
                      "істотний" if f_value > f_critical else "неістотний"])
     rows.append(["Залишок", sum_squares_error, degrees_error, mean_square_error, "", "", "", "", "", ""])
     return rows
@@ -352,7 +353,7 @@ def plot_two_factor(samples_by_cell, params):
         axis.set_xticks(x_values)
         axis.invert_xaxis()
         if key == "destroyed_fraction":
-            add_horizontal_reference(axis, DESTRUCTION_LIMIT * 100, "допустимо 30%")
+            add_horizontal_reference(axis, DESTRUCTION_REQUIREMENT * 100, "допустимо 30%")
         add_legend(axis, "best")
     figure.tight_layout()
     return save_figure(figure, "proposal_two_factor.png")

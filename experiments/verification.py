@@ -4,7 +4,7 @@ from typing import Callable
 
 import numpy as np
 
-from experiments.common import parallel_map, results_path, write_csv, write_text
+from experiments.common import DESTRUCTION_REQUIREMENT, parallel_map, results_path, write_csv, write_text
 from simulation.config import ModelConfig
 from simulation.transmission_model import MILLISECONDS_PER_SECOND, TransmissionModel
 
@@ -28,7 +28,6 @@ PROTOCOL_SIMULATION_MS = 5000.0
 ABSOLUTE_TOLERANCE = 1e-6
 UTILIZATION_TOLERANCE = 5e-3
 LITTLE_LAW_RELATIVE_TOLERANCE = 1e-3
-DESTRUCTION_REQUIREMENT = 0.30
 LIMIT_VIOLATION_NEGLIGIBLE = 1e-3
 LIMIT_VIOLATION_DOMINANT = 0.9
 
@@ -342,6 +341,43 @@ def check_threshold_edge_below(result, all_results):
     )
 
 
+def check_threshold_within_tolerance(result, all_results):
+    return result["destroyed_fraction"] == 0.0
+
+
+def check_threshold_beyond_tolerance(result, all_results):
+    return result["destroyed_fraction"] == 1.0
+
+
+def check_no_activation_before_window_full(result, all_results):
+    return (
+        result["exited"] == 99
+        and result["activation_count"] == 0
+        and result["max_window_destroyed_fraction"] == 0.0
+    )
+
+
+def check_activation_when_window_fills(result, all_results):
+    return (
+        result["exited"] == 100
+        and result["activation_count"] == 1
+        and result["deactivation_count"] == 0
+        and is_close(result["max_window_destroyed_fraction"], 0.99)
+    )
+
+
+def check_window_one_on_time_packet(result, all_results):
+    return result["exited"] == 1 and result["activation_count"] == 0
+
+
+def check_window_one_first_late_packet(result, all_results):
+    return (
+        result["exited"] == 2
+        and result["activation_count"] == 1
+        and result["deactivation_count"] == 0
+    )
+
+
 SCENARIOS = [
     VerificationScenario(
         "dd1_baseline",
@@ -572,6 +608,57 @@ SCENARIOS += [
     ),
 ]
 
+SCENARIOS += [
+    VerificationScenario(
+        "threshold_within_tolerance",
+        "D/D/1: поріг знищення 10 − 4·10⁻¹⁰ мс, T=10 мс у межах допуску 1e-9",
+        "arrival=constant 6; control=never; поріг знищення=10−4e-10",
+        constant_arrivals(6.0, control_mode="never", destruction_threshold=10.0 - 4e-10),
+        "Перевищення 4·10⁻¹⁰ мс менше за допуск: P_зн=0",
+        check_threshold_within_tolerance,
+    ),
+    VerificationScenario(
+        "threshold_beyond_tolerance",
+        "D/D/1: поріг знищення 10 − 4·10⁻⁹ мс, T=10 мс поза допуском 1e-9",
+        "arrival=constant 6; control=never; поріг знищення=10−4e-9",
+        constant_arrivals(6.0, control_mode="never", destruction_threshold=10.0 - 4e-9),
+        "Перевищення 4·10⁻⁹ мс більше за допуск: P_зн=1",
+        check_threshold_beyond_tolerance,
+    ),
+    VerificationScenario(
+        "activation_before_window_full",
+        "Момент вмикання, N=100: інтервал 4 мс, зупинка за 0.1 мс до виходу 100-го пакета",
+        "arrival=constant 4; control=adaptive; N=100; T_mod=508.9",
+        constant_arrivals(4.0, control_mode="adaptive", window_size=100, simulation_time=508.9),
+        "Пакет k виходить у 5k+9 мс; вийшло 99 пакетів, вікно не заповнене: підключень 0",
+        check_no_activation_before_window_full,
+    ),
+    VerificationScenario(
+        "activation_when_window_fills",
+        "Момент вмикання, N=100: інтервал 4 мс, зупинка в момент виходу 100-го пакета",
+        "arrival=constant 4; control=adaptive; N=100; T_mod=509",
+        constant_arrivals(4.0, control_mode="adaptive", window_size=100, simulation_time=509.0),
+        "У 509 мс вікно заповнюється: пакет 1 має T=10 і доставлений, 2..100 знищені; 99/100 ≥ 0.30, рівно 1 підключення",
+        check_activation_when_window_fills,
+    ),
+    VerificationScenario(
+        "activation_window_one_on_time",
+        "Момент вмикання, N=1: інтервал 4 мс, зупинка за 0.1 мс до виходу 2-го пакета",
+        "arrival=constant 4; control=adaptive; N=1; T_mod=18.9",
+        constant_arrivals(4.0, control_mode="adaptive", window_size=1, simulation_time=18.9),
+        "Пакет 1 виходить у 14 мс з T=10 і доставлений: підключень 0 (за помилкового T ≥ 10 було б підключення в 14 мс)",
+        check_window_one_on_time_packet,
+    ),
+    VerificationScenario(
+        "activation_window_one_first_late",
+        "Момент вмикання, N=1: інтервал 4 мс, зупинка в момент виходу 2-го пакета",
+        "arrival=constant 4; control=adaptive; N=1; T_mod=19",
+        constant_arrivals(4.0, control_mode="adaptive", window_size=1, simulation_time=19.0),
+        "Пакет 2 чекає 1 мс, T=11, знищений у 19 мс: рівно 1 підключення, відключень 0",
+        check_window_one_first_late_packet,
+    ),
+]
+
 SCENARIOS_BY_KEY = {scenario.key: scenario for scenario in SCENARIOS}
 
 
@@ -612,8 +699,8 @@ def table_cells(row):
     return [
         scenario.label,
         scenario.changed_inputs,
-        f"{scenario.warmup_time:.0f}",
-        f"{scenario.simulation_time:.0f}",
+        f"{scenario.warmup_time:g}",
+        f"{scenario.simulation_time:g}",
         scenario.replications,
         f"{result['destroyed_fraction']:.4f}",
         f"{result['destroyed_per_second']:.3f}",
@@ -650,7 +737,7 @@ def print_table(rows):
     for row in rows:
         scenario = row["scenario"]
         result = row["result"]
-        print(f"{scenario.key:<36} {scenario.warmup_time:>7.0f} {scenario.simulation_time:>8.0f} "
+        print(f"{scenario.key:<36} {scenario.warmup_time:>7g} {scenario.simulation_time:>8g} "
               f"{result['destroyed_fraction']:>7.4f} {result['activations_per_second']:>8.3f} "
               f"{result['accelerated_time_fraction']:>6.3f} {result['mean_queue_length_1']:>9.2f} "
               f"{result['max_queue_length_2']:>6.1f} {result['utilization_1']:>6.3f} "

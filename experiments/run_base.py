@@ -4,8 +4,8 @@ import numpy as np
 from scipy import stats
 
 from experiments.common import (
-    base_config_from_run_params, confidence_half_width, load_run_params, parallel_map,
-    run_replications, write_csv,
+    DESTRUCTION_REQUIREMENT, MODE_LABELS, base_config_from_run_params, confidence_half_width, format_p_value,
+    load_run_params, parallel_map, run_replications, write_csv,
 )
 from experiments.plotting import (
     add_horizontal_reference, add_legend, add_vertical_reference, create_figure, label_axes,
@@ -14,13 +14,7 @@ from experiments.plotting import (
 from simulation.config import CONTROL_MODES
 from simulation.transmission_model import TransmissionModel
 
-MODE_LABELS = {
-    "adaptive": "З керуванням",
-    "never": "Без керування",
-    "always": "Завжди прискорено",
-}
 SIGNIFICANCE_LEVEL = 0.05
-DESTRUCTION_REQUIREMENT = 0.30
 DESTRUCTION_THRESHOLD_MS = 10.0
 HISTOGRAM_BIN_WIDTH_MS = 0.5
 HISTOGRAM_LOWER_EDGE_MS = 7.0
@@ -173,8 +167,8 @@ def build_anova_rows(results_by_mode):
         )
         rows.append([
             name, manual["ss_between"], manual["ss_within"], manual["df_between"], manual["df_within"],
-            manual["ms_between"], manual["ms_within"], manual["f"], manual["f_critical"], manual["p"],
-            float(reference.statistic), float(reference.pvalue), manual["eta_squared"], conclusion,
+            manual["ms_between"], manual["ms_within"], manual["f"], manual["f_critical"], format_p_value(manual["p"]),
+            float(reference.statistic), format_p_value(float(reference.pvalue)), manual["eta_squared"], conclusion,
         ])
     return rows
 
@@ -259,7 +253,7 @@ def main():
     ], anova_rows)
     print("\nДисперсійний аналіз (режим керування, 3 рівні, незалежні потоки випадкових чисел)")
     for row in anova_rows:
-        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p = {row[9]:.3g}, η² = {row[12]:.4f}; {row[13]}")
+        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p {row[9]}, η² = {row[12]:.4f}; {row[13]}")
 
     histogram_configs = [
         base_config_from_run_params(params, control_mode=mode, seed=HISTOGRAM_SEED) for mode in HISTOGRAM_MODES

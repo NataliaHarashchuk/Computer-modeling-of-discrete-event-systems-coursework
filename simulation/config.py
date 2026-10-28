@@ -22,6 +22,8 @@ class ModelConfig:
     window_size: int = 100
     activation_threshold: float = 0.30
     deactivation_threshold: float | None = None
+    activate_at_threshold: bool = True
+    deactivate_at_threshold: bool = False
     control_mode: str = "adaptive"
     early_discard: bool = False
     warmup_time: float = 0.0
@@ -42,6 +44,12 @@ class ModelConfig:
             raise ValueError("arrival interval bounds must satisfy 0 < arrival_min <= arrival_max")
         if self.arrival_mean <= 0 or self.service_time_normal <= 0 or self.service_time_accelerated <= 0:
             raise ValueError("mean times must be positive")
+        if self.service_time_accelerated > self.service_time_normal:
+            raise ValueError("service_time_accelerated must not exceed service_time_normal")
+        if self.destruction_threshold <= 0:
+            raise ValueError("destruction_threshold must be positive")
+        if self.time_tolerance < 0:
+            raise ValueError("time_tolerance must be non-negative")
         if self.arrival_distribution == "uniform" and not math.isclose(self.arrival_mean, self.arrival_center):
             raise ValueError("for uniform arrivals arrival_mean must equal (arrival_min + arrival_max) / 2")
         if self.window_size < 1 or self.destruction_limit_window_size < 1:

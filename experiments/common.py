@@ -14,6 +14,19 @@ from simulation.transmission_model import TransmissionModel
 RESULTS_DIRECTORY = Path(__file__).resolve().parent.parent / "results"
 RUN_PARAMS_FILE = RESULTS_DIRECTORY / "run_params.json"
 CONFIDENCE_LEVEL = 0.95
+DESTRUCTION_REQUIREMENT = 0.30
+SMALLEST_REPORTED_P_VALUE = 1e-300
+MODE_LABELS = {
+    "adaptive": "З керуванням",
+    "never": "Без керування",
+    "always": "Завжди прискорено",
+}
+
+
+def format_p_value(p_value):
+    if p_value < SMALLEST_REPORTED_P_VALUE:
+        return f"< {SMALLEST_REPORTED_P_VALUE:g}"
+    return f"{p_value:.3g}"
 
 
 def results_path(filename):

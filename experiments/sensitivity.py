@@ -3,6 +3,8 @@ import time
 import numpy as np
 
 from experiments.common import (
+    DESTRUCTION_REQUIREMENT,
+    MODE_LABELS,
     base_config_from_run_params,
     confidence_half_width,
     load_run_params,
@@ -24,17 +26,11 @@ from experiments.plotting import (
 )
 from simulation.config import CONTROL_MODES
 
-DESTRUCTION_REQUIREMENT = 0.30
 BAR_WIDTH = 0.36
 SERVICE_LAWS = (
     ("constant", "Детерміноване 5 / 4 мс"),
     ("exponential", "Експоненційне, середнє 5 / 4 мс"),
 )
-MODE_LABELS = {
-    "adaptive": "З керуванням",
-    "never": "Без керування",
-    "always": "Завжди прискорено",
-}
 LAW_SEED_OFFSET = 50_000
 MODE_SEED_STRIDE = 10_000
 RESPONSES = (

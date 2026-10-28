@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
-from scipy import stats
+from scipy import integrate, stats
 
 from experiments.common import CONFIDENCE_LEVEL, confidence_half_width, parallel_map, results_path, write_csv
 from simulation.analytics import jackson_tandem_characteristics, tandem_destruction_probability
@@ -15,6 +15,20 @@ from simulation.transmission_model import TransmissionModel
 
 OUTPUT_FILE = "validation.csv"
 RECURSION_OUTPUT_FILE = "validation_recursion.csv"
+TAIL_FORMULA_OUTPUT_FILE = "validation_tail_formula.csv"
+
+TAIL_FORMULA_CASES = (
+    (1 / 6, 1 / 5, 1 / 5),
+    (1 / 6, 1 / 5, 1 / 4),
+    (1 / 6, 1 / 4, 1 / 5),
+    (1 / 10, 1 / 5, 1 / 4),
+    (1 / 6, 1 / 5, 1 / 5 + 1e-6),
+)
+TAIL_FORMULA_TOLERANCE = 1e-9
+TAIL_FORMULA_HEADER = [
+    "λ, 1/мс", "μ1, 1/мс", "μ2, 1/мс", "Поріг t, мс", "P(T > t) за формулою", "P(T > t) чисельним інтегруванням",
+    "Абсолютна різниця", "Збіг",
+]
 
 REPLICATIONS = 20
 WARMUP_TIME_MS = 10000.0
@@ -368,6 +382,37 @@ def print_table(rows):
           "незалежним рекурсивним алгоритмом.")
 
 
+def numerical_tail_probability(rate_1, rate_2, threshold):
+    def density_first_times_tail_second(first_time):
+        return rate_1 * math.exp(-rate_1 * first_time) * math.exp(-rate_2 * (threshold - first_time))
+
+    integral, _ = integrate.quad(density_first_times_tail_second, 0.0, threshold, epsabs=1e-14, epsrel=1e-12)
+    return math.exp(-rate_1 * threshold) + integral
+
+
+def tail_formula_rows():
+    rows = []
+    for arrival_rate, service_rate_1, service_rate_2 in TAIL_FORMULA_CASES:
+        formula = tandem_destruction_probability(arrival_rate, service_rate_1, service_rate_2, DESTRUCTION_THRESHOLD_MS)
+        numerical = numerical_tail_probability(
+            service_rate_1 - arrival_rate, service_rate_2 - arrival_rate, DESTRUCTION_THRESHOLD_MS,
+        )
+        difference = abs(formula - numerical)
+        rows.append([
+            f"{arrival_rate:.6g}", f"{service_rate_1:.6g}", f"{service_rate_2:.6g}", f"{DESTRUCTION_THRESHOLD_MS:g}",
+            f"{formula:.12f}", f"{numerical:.12f}", f"{difference:.2e}",
+            "так" if difference <= TAIL_FORMULA_TOLERANCE else "ні",
+        ])
+    return rows
+
+
+def print_tail_formula_table(rows):
+    print("Формула хвоста гіпоекспоненційного розподілу P(T > 10 мс) проти чисельного інтегрування згортки")
+    for row in rows:
+        print(f"  λ={row[0]}, μ1={row[1]}, μ2={row[2]}: формула {row[4]}, інтеграл {row[5]}, "
+              f"різниця {row[6]}, збіг: {row[7]}")
+
+
 def main():
     started = time.perf_counter()
     rows = []
@@ -376,11 +421,16 @@ def main():
     write_csv(OUTPUT_FILE, HEADER, csv_rows(rows))
     print_table(rows)
     print()
+    formula_rows = tail_formula_rows()
+    write_csv(TAIL_FORMULA_OUTPUT_FILE, TAIL_FORMULA_HEADER, formula_rows)
+    print_tail_formula_table(formula_rows)
+    print()
     recursion_rows = run_recursion_check()
     write_csv(RECURSION_OUTPUT_FILE, RECURSION_HEADER, recursion_csv_rows(recursion_rows))
     print_recursion_table(recursion_rows)
     print()
-    print(f"Збережено: {results_path(OUTPUT_FILE)}, {results_path(RECURSION_OUTPUT_FILE)}")
+    print(f"Збережено: {results_path(OUTPUT_FILE)}, {results_path(TAIL_FORMULA_OUTPUT_FILE)}, "
+          f"{results_path(RECURSION_OUTPUT_FILE)}")
     print(f"Час виконання: {time.perf_counter() - started:.1f} с")
 
 

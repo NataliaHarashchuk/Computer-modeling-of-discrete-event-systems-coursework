@@ -144,6 +144,8 @@ class TransmissionModel:
             self.config.window_size,
             self.config.activation_threshold,
             self.config.effective_deactivation_threshold,
+            self.config.activate_at_threshold,
+            self.config.deactivate_at_threshold,
         )
 
     def finish_warmup(self):
@@ -210,7 +212,7 @@ class TransmissionModel:
                 self.record_trace_snapshot()
                 trace_index += 1
                 trace_time = config.warmup_time + trace_index * config.trace_interval
-        self.model.run_until(config.end_time)
+        self.model.simulate(config.end_time)
         return self.collect_results()
 
     def collect_results(self):
