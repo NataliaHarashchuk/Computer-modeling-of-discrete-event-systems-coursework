@@ -62,5 +62,5 @@ class Model:
             self.process_simultaneous_events()
         self.advance_time_to(stop_time)
 
-    def simulate(self, simulation_time):
-        self.run_until(simulation_time)
+    def simulate(self, end_time):
+        self.run_until(end_time)

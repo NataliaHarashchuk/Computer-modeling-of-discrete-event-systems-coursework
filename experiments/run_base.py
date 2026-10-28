@@ -253,7 +253,7 @@ def main():
     ], anova_rows)
     print("\nДисперсійний аналіз (режим керування, 3 рівні, незалежні потоки випадкових чисел)")
     for row in anova_rows:
-        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p {row[9]}, η² = {row[12]:.4f}; {row[13]}")
+        print(f"{row[0]}: F = {row[7]:.4g}, F_крит = {row[8]:.4g}, p {row[9] if row[9].startswith('<') else '= ' + row[9]}, η² = {row[12]:.4f}; {row[13]}")
 
     histogram_configs = [
         base_config_from_run_params(params, control_mode=mode, seed=HISTOGRAM_SEED) for mode in HISTOGRAM_MODES

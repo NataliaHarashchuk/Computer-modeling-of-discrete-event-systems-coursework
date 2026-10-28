@@ -119,9 +119,9 @@ def comparison_row(label, samples, baseline):
         round(relative_change_percent(destroyed, baseline["destroyed_fraction"]), 2),
         round(relative_change_percent(activations, baseline["activations_per_second"]), 2),
         round(relative_change_percent(accelerated, baseline["accelerated_time_fraction"]), 2),
-        f"{paired_p_value(destroyed, baseline['destroyed_fraction']):.3g}",
-        f"{paired_p_value(activations, baseline['activations_per_second']):.3g}",
-        f"{paired_p_value(accelerated, baseline['accelerated_time_fraction']):.3g}",
+        format_p_value(paired_p_value(destroyed, baseline["destroyed_fraction"])),
+        format_p_value(paired_p_value(activations, baseline["activations_per_second"])),
+        format_p_value(paired_p_value(accelerated, baseline["accelerated_time_fraction"])),
         "так" if meets_requirement(destroyed) else "ні",
     ]
 

@@ -49,6 +49,10 @@ RECURSION_SCENARIOS = (
     ("Гістерезис 30/20, N = 300", dict(control_mode="adaptive", deactivation_threshold=0.20, window_size=300)),
     ("Інтервал unif(2; 8) мс, керування θ = 30%", dict(control_mode="adaptive", arrival_min=2.0, arrival_max=8.0,
                                                     arrival_mean=5.0)),
+    ("Строге підключення > 30%, вимкнення < 30%", dict(control_mode="adaptive", activate_at_threshold=False)),
+    ("Строге підключення > 30%, вимкнення ≤ 30%", dict(control_mode="adaptive", activate_at_threshold=False,
+                                                     deactivate_at_threshold=True)),
+    ("Підключення ≥ 30%, вимкнення ≤ 30%", dict(control_mode="adaptive", deactivate_at_threshold=True)),
 )
 RECURSION_INDICATORS = (
     ("Вийшло пакетів, шт", "exited"),
@@ -214,12 +218,20 @@ class RecursiveController:
             return
         share = self.destroyed_in_window / window_size
         accelerated = self.switch_states[-1]
-        if not accelerated and share >= self.config.activation_threshold:
+        if not accelerated and self.reaches_activation(share):
             self.switch_times.append(exit_time)
             self.switch_states.append(True)
-        elif accelerated and share < self.config.effective_deactivation_threshold:
+        elif accelerated and self.reaches_deactivation(share):
             self.switch_times.append(exit_time)
             self.switch_states.append(False)
+
+    def reaches_activation(self, share):
+        threshold = self.config.activation_threshold
+        return share >= threshold if self.config.activate_at_threshold else share > threshold
+
+    def reaches_deactivation(self, share):
+        threshold = self.config.effective_deactivation_threshold
+        return share <= threshold if self.config.deactivate_at_threshold else share < threshold
 
     def accelerated_at(self, time):
         self.apply_exits_until(time)
